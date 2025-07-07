@@ -163,53 +163,81 @@ class TongDaXinDataProvider:
         """
         global _stock_name_cache
         
+        print(f"🔍 [股票名称] 开始获取股票名称: {stock_code}")
+        
         # 首先检查缓存
         if stock_code in _stock_name_cache:
-            return _stock_name_cache[stock_code]
+            cached_name = _stock_name_cache[stock_code]
+            print(f"✅ [股票名称] 从缓存获取: {stock_code} -> {cached_name}")
+            return cached_name
         
         # 优先从MongoDB获取
+        print(f"🔍 [股票名称] 尝试从MongoDB获取: {stock_code}")
         mongodb_name = _get_stock_name_from_mongodb(stock_code)
         if mongodb_name:
+            print(f"✅ [股票名称] 从MongoDB获取成功: {stock_code} -> {mongodb_name}")
             _stock_name_cache[stock_code] = mongodb_name
             return mongodb_name
+        else:
+            print(f"⚠️ [股票名称] MongoDB查询无结果: {stock_code}")
         
         # 检查常用股票映射表
+        print(f"🔍 [股票名称] 检查常用股票映射表: {stock_code}")
         if stock_code in _common_stock_names:
             name = _common_stock_names[stock_code]
+            print(f"✅ [股票名称] 从映射表获取: {stock_code} -> {name}")
             _stock_name_cache[stock_code] = name
             return name
+        else:
+            print(f"⚠️ [股票名称] 映射表中未找到: {stock_code}")
         
         # 如果API不可用，直接返回默认格式
         if not self.connected:
+            print(f"⚠️ [股票名称] API未连接，尝试连接...")
             if not self.connect():
                 default_name = f'股票{stock_code}'
+                print(f"❌ [股票名称] API连接失败，使用默认格式: {stock_code} -> {default_name}")
                 _stock_name_cache[stock_code] = default_name
                 return default_name
         
         try:
             # 仅对深圳市场尝试从API获取（上海市场的get_security_list不可用）
             market = self._get_market_code(stock_code)
+            print(f"🔍 [股票名称] 股票市场代码: {stock_code} -> market={market}")
+            
             if market == 0:  # 深圳市场
+                print(f"🔍 [股票名称] 深圳市场，尝试API获取: {stock_code}")
                 try:
                     for start_pos in range(0, 2000, 1000):  # 分批获取
+                        print(f"🔍 [股票名称] 获取股票列表 start_pos={start_pos}")
                         stock_list = self.api.get_security_list(market, start_pos)
                         if stock_list:
                             for stock_info in stock_list:
                                 if stock_info.get('code') == stock_code:
                                     stock_name = stock_info.get('name', '').strip()
                                     if stock_name:
+                                        print(f"✅ [股票名称] 从API获取成功: {stock_code} -> {stock_name}")
                                         _stock_name_cache[stock_code] = stock_name
                                         return stock_name
+                        else:
+                            print(f"⚠️ [股票名称] API返回空列表 start_pos={start_pos}")
+                    print(f"⚠️ [股票名称] API中未找到股票: {stock_code}")
                 except Exception as e:
-                    print(f"⚠️ 获取深圳股票列表失败: {e}")
+                    print(f"❌ [股票名称] 获取深圳股票列表失败: {e}")
+            else:
+                print(f"ℹ️ [股票名称] 上海市场，跳过API查询: {stock_code}")
             
             # 如果都失败了，返回默认格式并缓存
             default_name = f'股票{stock_code}'
+            print(f"⚠️ [股票名称] 所有方法都失败，使用默认格式: {stock_code} -> {default_name}")
             _stock_name_cache[stock_code] = default_name
             return default_name
             
         except Exception as e:
-            print(f"⚠️ 获取股票名称失败: {e}")
+            print(f"❌ [股票名称] 获取股票名称失败: {e}")
+            import traceback
+            print(f"❌ [股票名称] 详细错误信息:")
+            print(traceback.format_exc())
             default_name = f'股票{stock_code}'
             _stock_name_cache[stock_code] = default_name
             return default_name
@@ -589,6 +617,7 @@ _common_stock_names = {
     # 上海主板
     '600519': '贵州茅台',
     '600036': '招商银行',
+    '600436': '片仔癀',  # 福建片仔癀股份有限公司
     '601398': '工商银行',
     '601127': '小康股份',
     '600000': '浦发银行',

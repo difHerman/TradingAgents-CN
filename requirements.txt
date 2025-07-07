@@ -1,4 +1,4 @@
-typing-extensions
+﻿typing-extensions
 langchain-openai
 langchain-experimental
 pandas
@@ -27,5 +27,5 @@ langchain-google-genai
 dashscope
 streamlit
 plotly
-pytdx  # 通达信API，用于获取中国股票实时数据
-pymongo  # MongoDB数据库支持，用于Token使用记录存储
+pytdx  # 閫氳揪淇PI锛岀敤浜庤幏鍙栦腑鍥借偂绁ㄥ疄鏃舵暟鎹?
+pymongo  # MongoDB鏁版嵁搴撴敮鎸侊紝鐢ㄤ簬Token浣跨敤璁板綍瀛樺偍

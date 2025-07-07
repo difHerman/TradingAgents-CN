@@ -131,24 +131,33 @@ def render_analysis_form():
             )
 
         # 提交按钮
-        submitted = st.form_submit_button(
-            "🚀 开始分析",
-            type="primary",
-            use_container_width=True
-        )
+        col1, col2 = st.columns(2)
+        with col1:
+            submitted = st.form_submit_button(
+                "🚀 开始分析",
+                type="primary",
+                use_container_width=True,
+                help="启动完整的AI分析流程，会消耗API额度。"
+            )
+        with col2:
+            mock_submitted = st.form_submit_button(
+                "🧪 生成测试报告",
+                use_container_width=True,
+                help="快速生成一份模拟报告，用于测试UI和导出功能，不消耗API额度。"
+            )
 
-    # 只有在提交时才返回数据
-    if submitted:
-        return {
-            'submitted': True,
-            'stock_symbol': stock_symbol,
-            'market_type': market_type,
-            'analysis_date': str(analysis_date),
-            'analysts': [a[0] for a in selected_analysts],
-            'research_depth': research_depth,
-            'include_sentiment': include_sentiment,
-            'include_risk_assessment': include_risk_assessment,
-            'custom_prompt': custom_prompt
-        }
-    else:
-        return {'submitted': False}
+    # 总是返回表单数据，以便app.py可以检查两个按钮的状态
+    form_data = {
+        'submitted': submitted,
+        'mock_submitted': mock_submitted,
+        'stock_symbol': stock_symbol,
+        'market_type': market_type,
+        'analysis_date': str(analysis_date),
+        'analysts': [a[0] for a in selected_analysts],
+        'research_depth': research_depth,
+        'include_sentiment': include_sentiment,
+        'include_risk_assessment': include_risk_assessment,
+        'custom_prompt': custom_prompt
+    }
+    
+    return form_data

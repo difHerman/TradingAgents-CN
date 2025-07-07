@@ -20,13 +20,15 @@ sys.path.insert(0, str(project_root))
 load_dotenv(project_root / ".env", override=True)
 
 # 导入自定义组件
-from components.sidebar import render_sidebar
-from components.header import render_header
-from components.analysis_form import render_analysis_form
-from components.results_display import render_results
-from utils.api_checker import check_api_keys
-from utils.analysis_runner import run_stock_analysis, validate_analysis_params, format_analysis_results
-from utils.progress_tracker import StreamlitProgressDisplay, create_progress_callback
+from web.components.sidebar import render_sidebar
+from web.components.header import render_header
+from web.components.analysis_form import render_analysis_form
+from web.components.results_display import render_results
+from web.utils.api_checker import check_api_keys
+from web.utils.analysis_runner import run_stock_analysis, validate_analysis_params
+from web.utils.progress_tracker import StreamlitProgressDisplay, create_progress_callback
+from web.utils.exporter import generate_markdown_report, WEASYPRINT_AVAILABLE
+from web.utils.mock_generator import generate_mock_analysis_results
 
 # 设置页面配置
 st.set_page_config(
@@ -201,7 +203,7 @@ def main():
     # 根据选择的页面渲染不同内容
     if page == "⚙️ 配置管理":
         try:
-            from pages.config_management import render_config_management
+            from web.pages.config_management import render_config_management
             render_config_management()
         except ImportError as e:
             st.error(f"配置管理模块加载失败: {e}")
@@ -209,14 +211,14 @@ def main():
         return
     elif page == "💾 缓存管理":
         try:
-            from pages.cache_management import main as cache_main
+            from web.pages.cache_management import main as cache_main
             cache_main()
         except ImportError as e:
             st.error(f"缓存管理页面加载失败: {e}")
         return
     elif page == "💰 Token统计":
         try:
-            from pages.token_statistics import render_token_statistics
+            from web.pages.token_statistics import render_token_statistics
             render_token_statistics()
         except ImportError as e:
             st.error(f"Token统计页面加载失败: {e}")
@@ -285,6 +287,14 @@ def main():
         # 渲染分析表单
         form_data = render_analysis_form()
 
+        # 检查是否点击了模拟按钮
+        if form_data.get('mock_submitted', False):
+            st.session_state.analysis_results = generate_mock_analysis_results()
+            st.session_state.analysis_running = False
+            st.info("已生成模拟测试报告。")
+            st.rerun()
+
+        # 检查是否提交了表单
         # 检查是否提交了表单
         if form_data.get('submitted', False):
             if not form_data['stock_symbol']:
@@ -298,29 +308,43 @@ def main():
                 # 创建进度显示
                 progress_container = st.container()
                 progress_display = StreamlitProgressDisplay(progress_container)
-                progress_callback = create_progress_callback(progress_display)
 
                 try:
-                    results = run_stock_analysis(
-                        stock_symbol=form_data['stock_symbol'],
-                        analysis_date=form_data['analysis_date'],
-                        analysts=form_data['analysts'],
-                        research_depth=form_data['research_depth'],
-                        llm_provider=config['llm_provider'],
-                        market_type=form_data.get('market_type', '美股'),
-                        llm_model=config['llm_model'],
-                        progress_callback=progress_callback
-                    )
+                    # 运行分析
+                    with st.spinner("🚀 正在分析中，请稍候..."):
+                        final_result = run_stock_analysis(
+                            stock_symbol=form_data['stock_symbol'],
+                            analysis_date=form_data['analysis_date'],
+                            analysts=form_data['analysts'],
+                            research_depth=form_data['research_depth'],
+                            llm_provider=config['llm_provider'],
+                            market_type=form_data.get('market_type', '美股'),
+                            llm_model=config['llm_model'],
+                            progress_callback=progress_display.update
+                        )
+                    
+                    if final_result:
+                        # 将所有结果打包到一个字典中，方便传递
+                        st.session_state.analysis_results = {
+                            'stock_symbol': form_data['stock_symbol'],
+                            'analysis_date': form_data['analysis_date'],
+                            'market_type': form_data.get('market_type', '美股'),
+                            'analysts': form_data['analysts'],
+                            'research_depth': form_data['research_depth'],
+                            'llm_provider': config['llm_provider'],
+                            'llm_model': config['llm_model'],
+                            'state': final_result['state'],
+                            'final_decision': final_result['decision'],
+                            'success': True
+                        }
+                        st.success("✅ 分析成功完成！")
+                    else:
+                        st.session_state.analysis_results = { 'success': False, 'error': "分析过程未能生成有效结果。" }
+                        st.error("分析失败，请检查终端日志获取详细信息。")
 
-                    # 清除进度显示
-                    progress_display.clear()
-
-                    # 格式化结果
-                    formatted_results = format_analysis_results(results)
-
-                    st.session_state.analysis_results = formatted_results
-                    st.session_state.last_analysis_time = datetime.datetime.now()
-                    st.success("✅ 分析完成！")
+                    # 无论成功或失败，都停止运行状态
+                    st.session_state.analysis_running = False
+                    st.rerun() # 重新运行以更新界面
 
                 except Exception as e:
                     # 清除进度显示
@@ -339,7 +363,22 @@ def main():
         
         # 显示分析结果
         if st.session_state.analysis_results:
-            render_results(st.session_state.analysis_results)
+            st.markdown("---")
+            st.header("📈 分析结果")
+            
+            # 如果是模拟数据，显示一个提示
+            if st.session_state.analysis_results.get('is_mock'):
+                st.info("🎭 **模拟报告模式**: 当前显示的是用于测试的模拟数据。")
+
+            if st.session_state.analysis_results.get('success'):
+                # 直接将完整的结果字典传递给渲染函数
+                render_results(st.session_state.analysis_results)
+                
+                # 记录最后一次分析时间
+                st.session_state.last_analysis_time = datetime.datetime.now()
+            else:
+                error_message = st.session_state.analysis_results.get('error', '未知错误')
+                st.error(f"分析失败: {error_message}")
     
     with col2:
         st.header("ℹ️ 使用指南")

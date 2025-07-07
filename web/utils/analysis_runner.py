@@ -8,6 +8,17 @@ import uuid
 from pathlib import Path
 from datetime import datetime
 from dotenv import load_dotenv
+import streamlit as st
+from tradingagents.config import config_manager
+from datetime import datetime, timedelta
+from web.utils.progress_tracker import AnalysisProgressTracker, StreamlitProgressDisplay
+import time
+import traceback
+import logging
+
+# 设置简单的日志记录器
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # 添加项目根目录到Python路径
 project_root = Path(__file__).parent.parent.parent
@@ -16,12 +27,16 @@ sys.path.insert(0, str(project_root))
 # 确保环境变量正确加载
 load_dotenv(project_root / ".env", override=True)
 
-# 添加配置管理器
-try:
-    from tradingagents.config.config_manager import token_tracker
-    TOKEN_TRACKING_ENABLED = True
-except ImportError:
-    TOKEN_TRACKING_ENABLED = False
+# 从环境变量决定是否启用Token跟踪
+TOKEN_TRACKING_ENABLED = os.getenv("ENABLE_TOKEN_TRACKING", "true").lower() == "true"
+if TOKEN_TRACKING_ENABLED:
+    try:
+        from tradingagents.config.config_manager import token_tracker
+        TOKEN_TRACKING_ENABLED = True
+    except ImportError:
+        logger.warning("Token跟踪模块导入失败，禁用Token跟踪功能")
+        TOKEN_TRACKING_ENABLED = False
+else:
     print("⚠️ Token跟踪功能未启用")
 
 def extract_risk_assessment(state):
@@ -64,207 +79,152 @@ def extract_risk_assessment(state):
         print(f"提取风险评估数据时出错: {e}")
         return None
 
-def run_stock_analysis(stock_symbol, analysis_date, analysts, research_depth, llm_provider, llm_model, market_type="美股", progress_callback=None):
-    """执行股票分析
-
-    Args:
-        stock_symbol: 股票代码
-        analysis_date: 分析日期
-        analysts: 分析师列表
-        research_depth: 研究深度
-        llm_provider: LLM提供商 (dashscope/google)
-        llm_model: 大模型名称
-        progress_callback: 进度回调函数，用于更新UI状态
+def run_stock_analysis(
+    stock_symbol: str, 
+    analysis_date: str, 
+    analysts: list, 
+    research_depth: int, 
+    llm_provider: str, 
+    market_type: str = "美股",
+    llm_model: str = "qwen-turbo",
+    progress_callback=None
+):
     """
+    运行股票分析的核心逻辑
+    """
+    # 将所有可能引起问题的导入移到函数内部
+    from tradingagents.graph.trading_graph import TradingAgentsGraph
+    from tradingagents.default_config import DEFAULT_CONFIG
+    
+    # 动态导入Token跟踪相关模块
+    TokenTrackingEnabled = TOKEN_TRACKING_ENABLED
+    UsageRecord = None
+    SessionManager = None
+    
+    if TokenTrackingEnabled:
+        try:
+            from tradingagents.db.models import UsageRecord
+            from tradingagents.db.session_manager import SessionManager
+        except ImportError as e:
+            logger.warning(f"Token跟踪模块导入失败: {e}")
+            TokenTrackingEnabled = False
 
-    def update_progress(message, step=None, total_steps=None):
-        """更新进度"""
+    tracker = AnalysisProgressTracker()
+
+    def update_progress(message, step=None):
+        nonlocal tracker
         if progress_callback:
-            progress_callback(message, step, total_steps)
-        print(f"[进度] {message}")
-
-    update_progress("开始股票分析...")
-
-    # 生成会话ID用于Token跟踪
-    session_id = f"analysis_{uuid.uuid4().hex[:8]}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-
-    # 估算Token使用（用于成本预估）
-    if TOKEN_TRACKING_ENABLED:
-        estimated_input = 2000 * len(analysts)  # 估算每个分析师2000个输入token
-        estimated_output = 1000 * len(analysts)  # 估算每个分析师1000个输出token
-        estimated_cost = token_tracker.estimate_cost(llm_provider, llm_model, estimated_input, estimated_output)
-
-        update_progress(f"预估分析成本: ¥{estimated_cost:.4f}")
-
-    # 验证环境变量
-    update_progress("检查环境变量配置...")
-    dashscope_key = os.getenv("DASHSCOPE_API_KEY")
-    finnhub_key = os.getenv("FINNHUB_API_KEY")
-
-    print(f"环境变量检查:")
-    print(f"  DASHSCOPE_API_KEY: {'已设置' if dashscope_key else '未设置'}")
-    print(f"  FINNHUB_API_KEY: {'已设置' if finnhub_key else '未设置'}")
-
-    if not dashscope_key:
-        raise ValueError("DASHSCOPE_API_KEY 环境变量未设置")
-    if not finnhub_key:
-        raise ValueError("FINNHUB_API_KEY 环境变量未设置")
-
-    update_progress("环境变量验证通过")
+            tracker.update(message, step)
+            
+            progress_callback(
+                message=tracker.steps[-1]['message'],
+                current_step=tracker.current_step,
+                total_steps=len(tracker.analysis_steps),
+                progress=tracker.get_progress_percentage() / 100,
+                elapsed_time=tracker.get_elapsed_time()
+            )
 
     try:
-        # 导入必要的模块
-        from tradingagents.graph.trading_graph import TradingAgentsGraph
-        from tradingagents.default_config import DEFAULT_CONFIG
+        update_progress("开始股票分析...")
 
-        # 创建配置
+        # 1. 参数验证
+        formatted_symbol, error = validate_analysis_params(stock_symbol, market_type)
+        if error:
+            raise ValueError(error)
+        
+        update_progress("参数验证通过")
+
+        # 2. 生成会话ID用于Token跟踪
+        session_id = f"analysis_{uuid.uuid4().hex[:8]}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
+        # 3. 估算Token使用（用于成本预估）
+        if TokenTrackingEnabled:
+            estimated_input = 2000 * len(analysts)
+            estimated_output = 1000 * len(analysts)
+            estimated_cost = (estimated_input / 1000 * 0.008) + (estimated_output / 1000 * 0.008)
+            update_progress(f"预估分析成本: ¥{estimated_cost:.4f}")
+
+        # 4. 配置
         update_progress("配置分析参数...")
         config = DEFAULT_CONFIG.copy()
+        config["session_id"] = session_id
         config["llm_provider"] = llm_provider
-        config["deep_think_llm"] = llm_model
-        config["quick_think_llm"] = llm_model
-        # 根据研究深度调整配置
-        if research_depth == 1:  # 1级 - 快速分析
-            config["max_debate_rounds"] = 1
-            config["max_risk_discuss_rounds"] = 1
-            config["memory_enabled"] = False  # 禁用记忆功能加速
-            config["online_tools"] = False  # 使用缓存数据加速
-            if llm_provider == "dashscope":
-                config["quick_think_llm"] = "qwen-turbo"  # 使用最快模型
-                config["deep_think_llm"] = "qwen-plus"
-        elif research_depth == 2:  # 2级 - 基础分析
-            config["max_debate_rounds"] = 1
-            config["max_risk_discuss_rounds"] = 1
-            config["memory_enabled"] = True
-            config["online_tools"] = True
-            if llm_provider == "dashscope":
-                config["quick_think_llm"] = "qwen-plus"
-                config["deep_think_llm"] = "qwen-plus"
-        elif research_depth == 3:  # 3级 - 标准分析 (默认)
-            config["max_debate_rounds"] = 1
-            config["max_risk_discuss_rounds"] = 2
-            config["memory_enabled"] = True
-            config["online_tools"] = True
-            if llm_provider == "dashscope":
-                config["quick_think_llm"] = "qwen-plus"
-                config["deep_think_llm"] = "qwen-max"
-        elif research_depth == 4:  # 4级 - 深度分析
-            config["max_debate_rounds"] = 2
-            config["max_risk_discuss_rounds"] = 2
-            config["memory_enabled"] = True
-            config["online_tools"] = True
-            if llm_provider == "dashscope":
-                config["quick_think_llm"] = "qwen-plus"
-                config["deep_think_llm"] = "qwen-max"
-        else:  # 5级 - 全面分析
-            config["max_debate_rounds"] = 3
-            config["max_risk_discuss_rounds"] = 3
-            config["memory_enabled"] = True
-            config["online_tools"] = True
-            if llm_provider == "dashscope":
-                config["quick_think_llm"] = "qwen-max"
-                config["deep_think_llm"] = "qwen-max"
-
-        # 根据LLM提供商设置不同的配置
+        config["llm_model"] = llm_model
+        
+        # 🔧 修复DashScope模型配置问题
         if llm_provider == "dashscope":
-            config["backend_url"] = "https://dashscope.aliyuncs.com/api/v1"
-        elif llm_provider == "google":
-            # Google AI不需要backend_url，使用默认的OpenAI格式
-            config["backend_url"] = "https://api.openai.com/v1"
-
-        # 修复路径问题
+            # 确保所有LLM配置都使用正确的qwen模型名称
+            config["quick_think_llm"] = llm_model  # 使用用户选择的模型
+            config["deep_think_llm"] = llm_model   # 使用用户选择的模型
+            print(f"🔧 [配置] DashScope模型配置: quick_think_llm={llm_model}, deep_think_llm={llm_model}")
+        
+        if research_depth > 3:
+            if llm_provider == "dashscope":
+                config["deep_think_llm"] = "qwen-max"  # 深度研究使用最强模型
+            else:
+                config["deep_think_llm"] = "o4-mini"   # 其他提供商保持原有逻辑
+        
         config["data_dir"] = str(project_root / "data")
         config["results_dir"] = str(project_root / "results")
         config["data_cache_dir"] = str(project_root / "tradingagents" / "dataflows" / "data_cache")
 
-        # 确保目录存在
         update_progress("创建必要的目录...")
         os.makedirs(config["data_dir"], exist_ok=True)
         os.makedirs(config["results_dir"], exist_ok=True)
         os.makedirs(config["data_cache_dir"], exist_ok=True)
 
-        print(f"使用配置: {config}")
-        print(f"分析师列表: {analysts}")
-        print(f"股票代码: {stock_symbol}")
-        print(f"分析日期: {analysis_date}")
+        update_progress(f"准备分析 {market_type} 股票: {formatted_symbol}")
 
-        # 根据市场类型调整股票代码格式
-        if market_type == "A股":
-            # A股代码不需要特殊处理，保持原样
-            formatted_symbol = stock_symbol
-            update_progress(f"准备分析A股: {formatted_symbol}")
-        else:
-            # 美股代码转为大写
-            formatted_symbol = stock_symbol.upper()
-            update_progress(f"准备分析美股: {formatted_symbol}")
-
-        # 初始化交易图
+        # 5. 初始化并执行分析
         update_progress("初始化分析引擎...")
         graph = TradingAgentsGraph(analysts, config=config, debug=False)
-
-        # 执行分析
-        update_progress(f"开始分析 {formatted_symbol} 股票，这可能需要几分钟时间...")
+        
+        update_progress(f"开始分析 {formatted_symbol}，这可能需要几分钟...")
         state, decision = graph.propagate(formatted_symbol, analysis_date)
 
-        # 调试信息
-        print(f"🔍 [DEBUG] 分析完成，decision类型: {type(decision)}")
-        print(f"🔍 [DEBUG] decision内容: {decision}")
-
-        # 格式化结果
-        update_progress("分析完成，正在整理结果...")
-
-        # 提取风险评估数据
-        risk_assessment = extract_risk_assessment(state)
-
-        # 将风险评估添加到状态中
-        if risk_assessment:
-            state['risk_assessment'] = risk_assessment
-
-        # 记录Token使用（实际使用量，这里使用估算值）
-        if TOKEN_TRACKING_ENABLED:
-            # 在实际应用中，这些值应该从LLM响应中获取
-            # 这里使用基于分析师数量和研究深度的估算
-            actual_input_tokens = len(analysts) * (1500 if research_depth == "快速" else 2500 if research_depth == "标准" else 4000)
-            actual_output_tokens = len(analysts) * (800 if research_depth == "快速" else 1200 if research_depth == "标准" else 2000)
-
-            usage_record = token_tracker.track_usage(
-                provider=llm_provider,
-                model_name=llm_model,
-                input_tokens=actual_input_tokens,
-                output_tokens=actual_output_tokens,
-                session_id=session_id,
-                analysis_type=f"{market_type}_analysis"
-            )
-
-            if usage_record:
+        # 6. 记录Token使用
+        if TokenTrackingEnabled and UsageRecord and SessionManager:
+            try:
+                with SessionManager() as session:
+                    usage_record = UsageRecord(
+                        session_id=session_id,
+                        provider=llm_provider,
+                        model=llm_model,
+                        input_tokens=estimated_input, # 实际值应从LLM响应获取
+                        output_tokens=estimated_output,
+                        cost=estimated_cost,
+                        timestamp=datetime.now()
+                    )
+                    session.add(usage_record)
                 update_progress(f"记录使用成本: ¥{usage_record.cost:.4f}")
+            except Exception as e:
+                logger.warning(f"Token使用记录失败: {e}")
 
-        results = {
-            'stock_symbol': stock_symbol,
-            'analysis_date': analysis_date,
-            'analysts': analysts,
-            'research_depth': research_depth,
-            'llm_provider': llm_provider,
-            'llm_model': llm_model,
-            'state': state,
-            'decision': decision,
-            'success': True,
-            'error': None,
-            'session_id': session_id if TOKEN_TRACKING_ENABLED else None
-        }
-
-        update_progress("✅ 分析成功完成！")
-        return results
+        update_progress("分析完成，正在整理结果...")
+        return { "state": state, "decision": decision }
 
     except Exception as e:
-        # 打印详细错误信息用于调试
-        print(f"真实分析失败，错误详情: {str(e)}")
-        print(f"错误类型: {type(e).__name__}")
-        import traceback
-        print(f"完整错误堆栈: {traceback.format_exc()}")
+        error_message = f"分析过程中出现错误: {str(e)}"
+        logger.error(f"{error_message}\n{traceback.format_exc()}")
+        if progress_callback:
+            update_progress(f"错误: {str(e)}")
+        return None
 
-        # 如果真实分析失败，返回模拟数据用于演示
-        return generate_demo_results(stock_symbol, analysis_date, analysts, research_depth, llm_provider, llm_model, str(e))
+def validate_analysis_params(stock_symbol: str, market_type: str):
+    """验证分析参数"""
+    if not stock_symbol or len(stock_symbol.strip()) == 0:
+        return None, "股票代码不能为空"
+    
+    if market_type == "A股":
+        if not (stock_symbol.startswith('6') or stock_symbol.startswith('0') or stock_symbol.startswith('3')):
+            return None, "无效的A股代码，应以上海(6)或深圳(0,3)开头"
+        if len(stock_symbol) != 6 or not stock_symbol.isdigit():
+            return None, "A股代码必须是6位数字"
+        return stock_symbol, None
+    elif market_type == "美股":
+        return stock_symbol.upper(), None
+    else:
+        return None, "不支持的市场类型"
 
 def format_analysis_results(results):
     """格式化分析结果用于显示"""
@@ -360,39 +320,6 @@ def format_analysis_results(results):
             'llm_model': results['llm_model']
         }
     }
-
-def validate_analysis_params(stock_symbol, analysis_date, analysts, research_depth):
-    """验证分析参数"""
-    
-    errors = []
-    
-    # 验证股票代码
-    if not stock_symbol or len(stock_symbol.strip()) == 0:
-        errors.append("股票代码不能为空")
-    elif len(stock_symbol.strip()) > 10:
-        errors.append("股票代码长度不能超过10个字符")
-    
-    # 验证分析师列表
-    if not analysts or len(analysts) == 0:
-        errors.append("必须至少选择一个分析师")
-    
-    valid_analysts = ['market', 'social', 'news', 'fundamentals']
-    invalid_analysts = [a for a in analysts if a not in valid_analysts]
-    if invalid_analysts:
-        errors.append(f"无效的分析师类型: {', '.join(invalid_analysts)}")
-    
-    # 验证研究深度
-    if not isinstance(research_depth, int) or research_depth < 1 or research_depth > 5:
-        errors.append("研究深度必须是1-5之间的整数")
-    
-    # 验证分析日期
-    try:
-        from datetime import datetime
-        datetime.strptime(analysis_date, '%Y-%m-%d')
-    except ValueError:
-        errors.append("分析日期格式无效，应为YYYY-MM-DD格式")
-    
-    return len(errors) == 0, errors
 
 def get_supported_stocks():
     """获取支持的股票列表"""

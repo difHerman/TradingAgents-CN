@@ -7,40 +7,67 @@ import plotly.graph_objects as go
 import plotly.express as px
 import pandas as pd
 from datetime import datetime
+from web.utils.exporter import export_to_markdown, export_to_html, export_to_pdf, WEASYPRINT_AVAILABLE
 
-def render_results(results):
-    """渲染分析结果"""
+def render_results(analysis_results):
+    """渲染分析结果和导出按钮"""
 
-    if not results:
+    if not analysis_results:
         st.warning("暂无分析结果")
         return
 
-    stock_symbol = results.get('stock_symbol', 'N/A')
-    decision = results.get('decision', {})
-    state = results.get('state', {})
-    is_demo = results.get('is_demo', False)
-
-    st.markdown("---")
-    st.header(f"📊 {stock_symbol} 分析结果")
-
-    # 如果是演示数据，显示提示
-    if is_demo:
-        st.info("🎭 **演示模式**: 当前显示的是模拟分析数据，用于界面演示。要获取真实分析结果，请配置正确的API密钥。")
-        if results.get('demo_reason'):
-            with st.expander("查看详细信息"):
-                st.text(results['demo_reason'])
-
+    stock_symbol = analysis_results.get('stock_symbol', 'N/A')
+    decision = analysis_results.get('final_decision', {})
+    state = analysis_results.get('state', {})
+    is_mock = analysis_results.get('is_mock', False)
+    
     # 投资决策摘要
     render_decision_summary(decision, stock_symbol)
 
-    # 分析配置信息
-    render_analysis_info(results)
-
-    # 详细分析报告
+    # 详细分析报告 - Tab页
     render_detailed_analysis(state)
 
+    # 分析配置信息
+    render_analysis_info(analysis_results)
+
+    st.markdown("---")
+
+    # 导出功能区域
+    st.subheader("📄 导出分析报告")
+    st.markdown("将详细的分析报告保存到本地 `results/` 目录中。")
+
+    col1, col2, col3, col4 = st.columns([1, 1, 1, 2])
+
+    with col1:
+        if st.button("导出为 Markdown (.md)", use_container_width=True):
+            try:
+                filepath = export_to_markdown(analysis_results)
+                st.success(f"报告已保存到: `{filepath}`")
+            except Exception as e:
+                st.error(f"Markdown导出失败: {e}")
+
+    with col2:
+        if st.button("导出为 HTML (.html)", use_container_width=True):
+            try:
+                filepath = export_to_html(analysis_results)
+                st.success(f"报告已保存到: `{filepath}`")
+            except Exception as e:
+                st.error(f"HTML导出失败: {e}")
+
+    with col3:
+        if WEASYPRINT_AVAILABLE:
+            if st.button("导出为 PDF (.pdf)", use_container_width=True):
+                try:
+                    with st.spinner("正在生成PDF，请稍候..."):
+                        filepath = export_to_pdf(analysis_results)
+                    st.success(f"报告已保存到: `{filepath}`")
+                except Exception as e:
+                    st.error(f"PDF导出失败: {e}")
+        else:
+            st.button("导出为 PDF (.pdf)", use_container_width=True, disabled=True, help="PDF导出功能需要安装weasyprint库，请运行 'pip install -r requirements_web.txt'")
+
     # 风险提示
-    render_risk_warning(is_demo)
+    render_risk_warning(is_mock)
 
 def render_analysis_info(results):
     """渲染分析配置信息"""

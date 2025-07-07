@@ -152,27 +152,93 @@ def create_market_analyst_react(llm, toolkit):
 ## 投资建议"""
 
             try:
-                # 创建ReAct Agent
+                # 创建ReAct Agent with improved error handling
                 prompt = hub.pull("hwchase17/react")
+                
+                # 自定义错误处理函数
+                def handle_parsing_errors(error):
+                    """处理解析错误的函数"""
+                    error_str = str(error)
+                    print(f"📈 [DEBUG] ReAct解析错误: {error_str}")
+                    
+                    # 如果是Action Input格式错误，提供格式指导
+                    if "Missing 'Action Input:'" in error_str:
+                        return """解析错误：Action格式不正确。正确格式应该是：
+
+Action: 工具名称
+Action Input: 输入参数
+
+请重新开始分析。如果无法使用工具，请直接提供分析结论。"""
+                    
+                    # 其他错误的通用处理
+                    return f"遇到解析错误，继续分析：{error_str}"
+                
                 agent = create_react_agent(llm, tools, prompt)
                 agent_executor = AgentExecutor(
                     agent=agent,
                     tools=tools,
                     verbose=True,
-                    handle_parsing_errors=True,
-                    max_iterations=10,  # 增加到10次迭代，确保有足够时间完成分析
-                    max_execution_time=180  # 增加到3分钟，给更多时间生成详细报告
+                    handle_parsing_errors=handle_parsing_errors,  # 使用自定义错误处理
+                    max_iterations=8,  # 适当减少迭代次数
+                    max_execution_time=120,  # 2分钟超时
+                    early_stopping_method="generate"  # 如果连续错误则生成最终答案
                 )
 
                 print(f"📈 [DEBUG] 执行ReAct Agent查询...")
                 result = agent_executor.invoke({'input': query})
 
                 report = result['output']
+                
+                # 检查报告质量，如果太短或格式有问题，尝试补充
+                if len(report) < 200 or "解析错误" in report:
+                    print(f"📈 [DEBUG] 报告质量不佳，尝试直接LLM生成...")
+                    
+                    # 直接使用LLM生成报告作为备用方案
+                    fallback_query = f"""请对{ticker}股票进行技术分析，要求：
+1. 分析时间段：{current_date}
+2. 报告长度：不少于600字
+3. 包含：基本信息、技术指标分析、价格趋势、投资建议
+4. 格式：完整的markdown格式报告
+
+请直接输出完整的技术分析报告内容。"""
+                    
+                    try:
+                        fallback_result = llm.invoke([("human", fallback_query)])
+                        if hasattr(fallback_result, 'content') and len(fallback_result.content) > len(report):
+                            report = fallback_result.content
+                            print(f"📈 [DEBUG] 使用备用LLM生成的报告，长度: {len(report)}")
+                    except Exception as fallback_error:
+                        print(f"📈 [DEBUG] 备用方案也失败: {fallback_error}")
+                
                 print(f"📈 [市场分析师] ReAct Agent完成，报告长度: {len(report)}")
 
             except Exception as e:
                 print(f"❌ [DEBUG] ReAct Agent失败: {str(e)}")
-                report = f"ReAct Agent市场分析失败: {str(e)}"
+                
+                # 如果ReAct完全失败，使用简单的LLM调用作为最后备用方案
+                try:
+                    print(f"📈 [DEBUG] 尝试简单LLM分析作为备用方案...")
+                    backup_query = f"""作为专业的股票分析师，请对{ticker}进行详细的技术分析报告。
+                    
+分析日期：{current_date}
+股票代码：{ticker}
+
+请包含以下内容：
+## 股票基本信息
+## 技术指标分析  
+## 价格趋势分析
+## 市场情绪分析
+## 投资建议
+
+要求：报告详细完整，不少于500字。"""
+
+                    backup_result = llm.invoke([("human", backup_query)])
+                    report = backup_result.content if hasattr(backup_result, 'content') else str(backup_result)
+                    print(f"📈 [DEBUG] 备用分析完成，报告长度: {len(report)}")
+                    
+                except Exception as backup_error:
+                    print(f"❌ [DEBUG] 备用分析也失败: {backup_error}")
+                    report = f"技术分析暂时无法完成。股票代码：{ticker}，分析日期：{current_date}。请稍后重试。"
         else:
             # 离线模式，使用原有逻辑
             report = "离线模式，暂不支持"
