@@ -86,7 +86,7 @@ def render_analysis_form():
                 ).strip()
 
                 logger.debug(f"🔍 [FORM DEBUG] A股text_input返回值: '{stock_symbol}'")
-            
+
             # 分析日期
             analysis_date = st.date_input(
                 "分析日期 📅",
