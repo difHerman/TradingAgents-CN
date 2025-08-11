@@ -2,6 +2,10 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 import time
 import json
 
+# 导入统一日志系统
+from tradingagents.utils.logging_init import get_logger
+logger = get_logger("default")
+
 
 def create_china_market_analyst(llm, toolkit):
     """创建中国市场分析师"""
@@ -41,7 +45,7 @@ def create_china_market_analyst(llm, toolkit):
 - 国企改革、混改等主题投资机会
 - 中美关系、地缘政治对中概股的影响
 
-请基于通达信API提供的实时数据和技术指标，结合中国股市的特殊性，撰写专业的中文分析报告。
+请基于Tushare数据接口提供的实时数据和技术指标，结合中国股市的特殊性，撰写专业的中文分析报告。
 确保在报告末尾附上Markdown表格总结关键发现和投资建议。"""
         )
         
@@ -61,7 +65,17 @@ def create_china_market_analyst(llm, toolkit):
         )
         
         prompt = prompt.partial(system_message=system_message)
-        prompt = prompt.partial(tool_names=", ".join([tool.name for tool in tools]))
+        # 安全地获取工具名称，处理函数和工具对象
+        tool_names = []
+        for tool in tools:
+            if hasattr(tool, 'name'):
+                tool_names.append(tool.name)
+            elif hasattr(tool, '__name__'):
+                tool_names.append(tool.__name__)
+            else:
+                tool_names.append(str(tool))
+
+        prompt = prompt.partial(tool_names=", ".join(tool_names))
         prompt = prompt.partial(current_date=current_date)
         prompt = prompt.partial(ticker=ticker)
         
@@ -139,7 +153,17 @@ def create_china_stock_screener(llm, toolkit):
         )
         
         prompt = prompt.partial(system_message=system_message)
-        prompt = prompt.partial(tool_names=", ".join([tool.name for tool in tools]))
+        # 安全地获取工具名称，处理函数和工具对象
+        tool_names = []
+        for tool in tools:
+            if hasattr(tool, 'name'):
+                tool_names.append(tool.name)
+            elif hasattr(tool, '__name__'):
+                tool_names.append(tool.__name__)
+            else:
+                tool_names.append(str(tool))
+
+        prompt = prompt.partial(tool_names=", ".join(tool_names))
         prompt = prompt.partial(current_date=current_date)
         
         chain = prompt | llm.bind_tools(tools)

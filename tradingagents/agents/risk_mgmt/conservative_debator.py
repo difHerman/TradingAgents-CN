@@ -3,6 +3,10 @@ import time
 import json
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
+# 导入统一日志系统
+from tradingagents.utils.logging_init import get_logger
+logger = get_logger("default")
+
 
 def create_safe_debator(llm, toolkit):
     def conservative_node(state) -> dict:

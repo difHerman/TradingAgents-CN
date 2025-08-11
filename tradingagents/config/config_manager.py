@@ -12,6 +12,13 @@ from dataclasses import dataclass, asdict
 from pathlib import Path
 from dotenv import load_dotenv
 
+# 导入统一日志系统
+from tradingagents.utils.logging_init import get_logger
+
+# 导入日志模块
+from tradingagents.utils.logging_manager import get_logger
+logger = get_logger('agents')
+
 try:
     from .mongodb_storage import MongoDBStorage
     MONGODB_AVAILABLE = True
@@ -120,13 +127,13 @@ class ConfigManager:
             )
             
             if self.mongodb_storage.is_connected():
-                print("✅ MongoDB存储已启用")
+                logger.info("✅ MongoDB存储已启用")
             else:
                 self.mongodb_storage = None
-                print("⚠️ MongoDB连接失败，将使用JSON文件存储")
-                
+                logger.warning("⚠️ MongoDB连接失败，将使用JSON文件存储")
+
         except Exception as e:
-            print(f"❌ MongoDB初始化失败: {e}")
+            logger.error(f"❌ MongoDB初始化失败: {e}", exc_info=True)
             self.mongodb_storage = None
 
     def _init_default_configs(self):
@@ -171,6 +178,14 @@ class ConfigManager:
                     max_tokens=4000,
                     temperature=0.7,
                     enabled=False
+                ),
+                ModelConfig(
+                    provider="deepseek",
+                    model_name="deepseek-chat",
+                    api_key="",
+                    max_tokens=8000,
+                    temperature=0.7,
+                    enabled=False
                 )
             ]
             self.save_models(default_models)
@@ -182,12 +197,16 @@ class ConfigManager:
                 PricingConfig("dashscope", "qwen-turbo", 0.002, 0.006, "CNY"),
                 PricingConfig("dashscope", "qwen-plus-latest", 0.004, 0.012, "CNY"),
                 PricingConfig("dashscope", "qwen-max", 0.02, 0.06, "CNY"),
-                
+
+                # DeepSeek定价 (人民币) - 2025年最新价格
+                PricingConfig("deepseek", "deepseek-chat", 0.0014, 0.0028, "CNY"),
+                PricingConfig("deepseek", "deepseek-coder", 0.0014, 0.0028, "CNY"),
+
                 # OpenAI定价 (美元)
                 PricingConfig("openai", "gpt-3.5-turbo", 0.0015, 0.002, "USD"),
                 PricingConfig("openai", "gpt-4", 0.03, 0.06, "USD"),
                 PricingConfig("openai", "gpt-4-turbo", 0.01, 0.03, "USD"),
-                
+
                 # Google定价 (美元)
                 PricingConfig("google", "gemini-pro", 0.00025, 0.0005, "USD"),
                 PricingConfig("google", "gemini-pro-vision", 0.00025, 0.0005, "USD"),
@@ -233,7 +252,7 @@ class ConfigManager:
 
                 return models
         except Exception as e:
-            print(f"加载模型配置失败: {e}")
+            logger.error(f"加载模型配置失败: {e}")
             return []
     
     def save_models(self, models: List[ModelConfig]):
@@ -243,16 +262,16 @@ class ConfigManager:
             with open(self.models_file, 'w', encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
         except Exception as e:
-            print(f"保存模型配置失败: {e}")
+            logger.error(f"保存模型配置失败: {e}")
     
     def load_pricing(self) -> List[PricingConfig]:
         """加载定价配置"""
         try:
             with open(self.pricing_file, 'r', encoding='utf-8') as f:
                 data = json.load(f)
-                return [PricingConfig(**item) for item in data]
+            return [PricingConfig(**item) for item in data]
         except Exception as e:
-            print(f"加载定价配置失败: {e}")
+            logger.error(f"加载定价配置失败: {e}")
             return []
     
     def save_pricing(self, pricing: List[PricingConfig]):
@@ -262,7 +281,7 @@ class ConfigManager:
             with open(self.pricing_file, 'w', encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
         except Exception as e:
-            print(f"保存定价配置失败: {e}")
+            logger.error(f"保存定价配置失败: {e}")
     
     def load_usage_records(self) -> List[UsageRecord]:
         """加载使用记录"""
@@ -273,7 +292,7 @@ class ConfigManager:
                 data = json.load(f)
                 return [UsageRecord(**item) for item in data]
         except Exception as e:
-            print(f"加载使用记录失败: {e}")
+            logger.error(f"加载使用记录失败: {e}")
             return []
     
     def save_usage_records(self, records: List[UsageRecord]):
@@ -283,9 +302,9 @@ class ConfigManager:
             with open(self.usage_file, 'w', encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
         except Exception as e:
-            print(f"保存使用记录失败: {e}")
+            logger.error(f"保存使用记录失败: {e}")
     
-    def add_usage_record(self, provider: str, model_name: str, input_tokens: int, 
+    def add_usage_record(self, provider: str, model_name: str, input_tokens: int,
                         output_tokens: int, session_id: str, analysis_type: str = "stock_analysis"):
         """添加使用记录"""
         # 计算成本
@@ -308,7 +327,7 @@ class ConfigManager:
             if success:
                 return record
             else:
-                print("⚠️ MongoDB保存失败，回退到JSON文件存储")
+                logger.error(f"⚠️ MongoDB保存失败，回退到JSON文件存储")
         
         # 回退到JSON文件存储
         records = self.load_usage_records()
@@ -326,13 +345,20 @@ class ConfigManager:
     def calculate_cost(self, provider: str, model_name: str, input_tokens: int, output_tokens: int) -> float:
         """计算使用成本"""
         pricing_configs = self.load_pricing()
-        
+
         for pricing in pricing_configs:
             if pricing.provider == provider and pricing.model_name == model_name:
                 input_cost = (input_tokens / 1000) * pricing.input_price_per_1k
                 output_cost = (output_tokens / 1000) * pricing.output_price_per_1k
-                return round(input_cost + output_cost, 6)
-        
+                total_cost = input_cost + output_cost
+                return round(total_cost, 6)
+
+        # 只在找不到配置时输出调试信息
+        logger.warning(f"⚠️ [calculate_cost] 未找到匹配的定价配置: {provider}/{model_name}")
+        logger.debug(f"⚠️ [calculate_cost] 可用的配置:")
+        for pricing in pricing_configs:
+            logger.debug(f"⚠️ [calculate_cost]   - {pricing.provider}/{pricing.model_name}")
+
         return 0.0
     
     def load_settings(self) -> Dict[str, Any]:
@@ -341,7 +367,7 @@ class ConfigManager:
             with open(self.settings_file, 'r', encoding='utf-8') as f:
                 settings = json.load(f)
         except Exception as e:
-            print(f"加载设置失败: {e}")
+            logger.error(f"加载设置失败: {e}")
             settings = {}
 
         # 合并.env中的其他配置
@@ -387,7 +413,7 @@ class ConfigManager:
             with open(self.settings_file, 'w', encoding='utf-8') as f:
                 json.dump(settings, f, ensure_ascii=False, indent=2)
         except Exception as e:
-            print(f"保存设置失败: {e}")
+            logger.error(f"保存设置失败: {e}")
     
     def get_enabled_models(self) -> List[ModelConfig]:
         """获取启用的模型"""
@@ -417,13 +443,14 @@ class ConfigManager:
                     stats["records_count"] = stats.get("total_requests", 0)
                     return stats
             except Exception as e:
-                print(f"⚠️ MongoDB统计获取失败，回退到JSON文件: {e}")
+                logger.error(f"⚠️ MongoDB统计获取失败，回退到JSON文件: {e}")
         
         # 回退到JSON文件统计
         records = self.load_usage_records()
         
         # 过滤最近N天的记录
         from datetime import datetime, timedelta
+
         cutoff_date = datetime.now() - timedelta(days=days)
         
         recent_records = []
@@ -504,9 +531,9 @@ class ConfigManager:
             if directory and not os.path.exists(directory):
                 try:
                     os.makedirs(directory, exist_ok=True)
-                    print(f"✅ 创建目录: {directory}")
+                    logger.info(f"✅ 创建目录: {directory}")
                 except Exception as e:
-                    print(f"❌ 创建目录失败 {directory}: {e}")
+                    logger.error(f"❌ 创建目录失败 {directory}: {e}")
 
 
 class TokenTracker:
@@ -523,7 +550,9 @@ class TokenTracker:
 
         # 检查是否启用成本跟踪
         settings = self.config_manager.load_settings()
-        if not settings.get("enable_cost_tracking", True):
+        cost_tracking_enabled = settings.get("enable_cost_tracking", True)
+
+        if not cost_tracking_enabled:
             return None
 
         # 添加使用记录
@@ -537,7 +566,8 @@ class TokenTracker:
         )
 
         # 检查成本警告
-        self._check_cost_alert(record.cost)
+        if record:
+            self._check_cost_alert(record.cost)
 
         return record
 
@@ -551,7 +581,8 @@ class TokenTracker:
         total_today = today_stats["total_cost"]
 
         if total_today >= threshold:
-            print(f"⚠️ 成本警告: 今日成本已达到 ¥{total_today:.4f}，超过阈值 ¥{threshold}")
+            logger.warning(f"⚠️ 成本警告: 今日成本已达到 ¥{total_today:.4f}，超过阈值 ¥{threshold}",
+                          extra={'cost': total_today, 'threshold': threshold, 'event_type': 'cost_alert'})
 
     def get_session_cost(self, session_id: str) -> float:
         """获取会话成本"""
@@ -569,6 +600,13 @@ class TokenTracker:
 
 
 
-# 全局配置管理器实例
-config_manager = ConfigManager()
+# 全局配置管理器实例 - 使用项目根目录的配置
+def _get_project_config_dir():
+    """获取项目根目录的配置目录"""
+    # 从当前文件位置推断项目根目录
+    current_file = Path(__file__)  # tradingagents/config/config_manager.py
+    project_root = current_file.parent.parent.parent  # 向上三级到项目根目录
+    return str(project_root / "config")
+
+config_manager = ConfigManager(_get_project_config_dir())
 token_tracker = TokenTracker(config_manager)

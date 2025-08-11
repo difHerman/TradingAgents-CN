@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-通达信API数据获取工具
+Tushare数据接口数据获取工具
 支持A股、港股实时数据和历史数据
 """
 
@@ -9,6 +9,10 @@ import numpy as np
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional, Tuple
 import warnings
+
+# 导入日志模块
+from tradingagents.utils.logging_manager import get_logger
+logger = get_logger('agents')
 warnings.filterwarnings('ignore')
 
 # 导入数据库管理器
@@ -17,7 +21,7 @@ try:
     DB_MANAGER_AVAILABLE = True
 except ImportError:
     DB_MANAGER_AVAILABLE = False
-    print("⚠️ 数据库缓存管理器不可用，尝试文件缓存")
+    logger.warning(f"⚠️ 数据库缓存管理器不可用，尝试文件缓存")
 
 # 导入MongoDB股票信息查询
 try:
@@ -26,54 +30,54 @@ try:
     MONGODB_AVAILABLE = True
 except ImportError:
     MONGODB_AVAILABLE = False
-    print("⚠️ pymongo未安装，无法从MongoDB获取股票名称")
+    logger.warning(f"⚠️ pymongo未安装，无法从MongoDB获取股票名称")
 
 try:
     from .cache_manager import get_cache
     FILE_CACHE_AVAILABLE = True
 except ImportError:
     FILE_CACHE_AVAILABLE = False
-    print("⚠️ 文件缓存管理器不可用，将直接从API获取数据")
+    logger.warning(f"⚠️ 文件缓存管理器不可用，将直接从API获取数据")
 
 try:
-    # 通达信Python接口
+    # 中国股票数据Python接口
     import pytdx
     from pytdx.hq import TdxHq_API
     from pytdx.exhq import TdxExHq_API
     TDX_AVAILABLE = True
 except ImportError:
     TDX_AVAILABLE = False
-    print("⚠️ pytdx库未安装，无法使用通达信API")
-    print("💡 安装命令: pip install pytdx")
+    logger.warning(f"⚠️ pytdx库未安装，无法使用Tushare数据接口")
+    logger.info(f"💡 安装命令: pip install pytdx")
 
 
 class TongDaXinDataProvider:
     """通达信数据提供器"""
     
     def __init__(self):
-        print(f"🔍 [DEBUG] 初始化通达信数据提供器...")
+        logger.debug(f"🔍 [DEBUG] 初始化通达信数据提供器...")
         self.api = None
         self.exapi = None  # 扩展行情API
         self.connected = False
 
-        print(f"🔍 [DEBUG] 检查pytdx库可用性: {TDX_AVAILABLE}")
+        logger.debug(f"🔍 [DEBUG] 检查pytdx库可用性: {TDX_AVAILABLE}")
         if not TDX_AVAILABLE:
             error_msg = "pytdx库未安装，请运行: pip install pytdx"
-            print(f"❌ [DEBUG] {error_msg}")
+            logger.error(f"❌ [DEBUG] {error_msg}")
             raise ImportError(error_msg)
-        print(f"✅ [DEBUG] pytdx库检查通过")
+        logger.debug(f"✅ [DEBUG] pytdx库检查通过")
     
     def connect(self):
-        """连接通达信服务器"""
-        print(f"🔍 [DEBUG] 开始连接通达信服务器...")
+        """连接数据服务器"""
+        logger.debug(f"🔍 [DEBUG] 开始连接数据服务器...")
         try:
             # 尝试从配置文件加载可用服务器
-            print(f"🔍 [DEBUG] 加载服务器配置...")
+            logger.debug(f"🔍 [DEBUG] 加载服务器配置...")
             working_servers = self._load_working_servers()
 
             # 如果没有配置文件，使用默认服务器列表
             if not working_servers:
-                print(f"🔍 [DEBUG] 未找到配置文件，使用默认服务器列表")
+                logger.debug(f"🔍 [DEBUG] 未找到配置文件，使用默认服务器列表")
                 working_servers = [
                     {'ip': '115.238.56.198', 'port': 7709},
                     {'ip': '115.238.90.165', 'port': 7709},
@@ -81,32 +85,32 @@ class TongDaXinDataProvider:
                     {'ip': '119.147.212.81', 'port': 7709},  # 备用
                 ]
             else:
-                print(f"🔍 [DEBUG] 从配置文件加载了 {len(working_servers)} 个服务器")
+                logger.debug(f"🔍 [DEBUG] 从配置文件加载了 {len(working_servers)} 个服务器")
 
             # 尝试连接可用服务器
-            print(f"🔍 [DEBUG] 创建通达信API实例...")
+            logger.debug(f"🔍 [DEBUG] 创建Tushare数据接口实例...")
             self.api = TdxHq_API()
-            print(f"🔍 [DEBUG] 开始尝试连接服务器...")
+            logger.debug(f"🔍 [DEBUG] 开始尝试连接服务器...")
 
             for i, server in enumerate(working_servers):
                 try:
-                    print(f"🔍 [DEBUG] 尝试连接服务器 {i+1}/{len(working_servers)}: {server['ip']}:{server['port']}")
+                    logger.debug(f"🔍 [DEBUG] 尝试连接服务器 {i+1}/{len(working_servers)}: {server['ip']}:{server['port']}")
                     result = self.api.connect(server['ip'], server['port'])
-                    print(f"🔍 [DEBUG] 连接结果: {result}")
+                    logger.debug(f"🔍 [DEBUG] 连接结果: {result}")
                     if result:
-                        print(f"✅ 通达信API连接成功: {server['ip']}:{server['port']}")
+                        logger.info(f"✅ Tushare数据接口连接成功: {server['ip']}:{server['port']}")
                         self.connected = True
                         return True
                 except Exception as e:
-                    print(f"⚠️ 服务器 {server['ip']}:{server['port']} 连接失败: {e}")
+                    logger.error(f"⚠️ 服务器 {server['ip']}:{server['port']} 连接失败: {e}")
                     continue
 
-            print("❌ 所有通达信服务器连接失败")
+            logger.error(f"❌ 所有数据服务器连接失败")
             self.connected = False
             return False
 
         except Exception as e:
-            print(f"❌ 通达信API连接失败: {e}")
+            logger.error(f"❌ Tushare数据接口连接失败: {e}")
             self.connected = False
             return False
 
@@ -133,7 +137,7 @@ class TongDaXinDataProvider:
             if self.exapi:
                 self.exapi.disconnect()
             self.connected = False
-            print("✅ 通达信API连接已断开")
+            logger.info(f"✅ Tushare数据接口连接已断开")
         except:
             pass
 
@@ -148,7 +152,7 @@ class TongDaXinDataProvider:
             result = self.api.get_security_count(0)  # 获取深圳市场股票数量
             return result is not None and result > 0
         except Exception as e:
-            print(f"🔍 [DEBUG] 连接测试失败: {e}")
+            logger.error(f"🔍 [DEBUG] 连接测试失败: {e}")
             self.connected = False
             return False
     
@@ -163,81 +167,53 @@ class TongDaXinDataProvider:
         """
         global _stock_name_cache
         
-        print(f"🔍 [股票名称] 开始获取股票名称: {stock_code}")
-        
         # 首先检查缓存
         if stock_code in _stock_name_cache:
-            cached_name = _stock_name_cache[stock_code]
-            print(f"✅ [股票名称] 从缓存获取: {stock_code} -> {cached_name}")
-            return cached_name
+            return _stock_name_cache[stock_code]
         
         # 优先从MongoDB获取
-        print(f"🔍 [股票名称] 尝试从MongoDB获取: {stock_code}")
         mongodb_name = _get_stock_name_from_mongodb(stock_code)
         if mongodb_name:
-            print(f"✅ [股票名称] 从MongoDB获取成功: {stock_code} -> {mongodb_name}")
             _stock_name_cache[stock_code] = mongodb_name
             return mongodb_name
-        else:
-            print(f"⚠️ [股票名称] MongoDB查询无结果: {stock_code}")
         
         # 检查常用股票映射表
-        print(f"🔍 [股票名称] 检查常用股票映射表: {stock_code}")
         if stock_code in _common_stock_names:
             name = _common_stock_names[stock_code]
-            print(f"✅ [股票名称] 从映射表获取: {stock_code} -> {name}")
             _stock_name_cache[stock_code] = name
             return name
-        else:
-            print(f"⚠️ [股票名称] 映射表中未找到: {stock_code}")
         
         # 如果API不可用，直接返回默认格式
         if not self.connected:
-            print(f"⚠️ [股票名称] API未连接，尝试连接...")
             if not self.connect():
                 default_name = f'股票{stock_code}'
-                print(f"❌ [股票名称] API连接失败，使用默认格式: {stock_code} -> {default_name}")
                 _stock_name_cache[stock_code] = default_name
                 return default_name
         
         try:
             # 仅对深圳市场尝试从API获取（上海市场的get_security_list不可用）
             market = self._get_market_code(stock_code)
-            print(f"🔍 [股票名称] 股票市场代码: {stock_code} -> market={market}")
-            
             if market == 0:  # 深圳市场
-                print(f"🔍 [股票名称] 深圳市场，尝试API获取: {stock_code}")
                 try:
                     for start_pos in range(0, 2000, 1000):  # 分批获取
-                        print(f"🔍 [股票名称] 获取股票列表 start_pos={start_pos}")
                         stock_list = self.api.get_security_list(market, start_pos)
                         if stock_list:
                             for stock_info in stock_list:
                                 if stock_info.get('code') == stock_code:
                                     stock_name = stock_info.get('name', '').strip()
                                     if stock_name:
-                                        print(f"✅ [股票名称] 从API获取成功: {stock_code} -> {stock_name}")
                                         _stock_name_cache[stock_code] = stock_name
                                         return stock_name
-                        else:
-                            print(f"⚠️ [股票名称] API返回空列表 start_pos={start_pos}")
-                    print(f"⚠️ [股票名称] API中未找到股票: {stock_code}")
                 except Exception as e:
-                    print(f"❌ [股票名称] 获取深圳股票列表失败: {e}")
-            else:
-                print(f"ℹ️ [股票名称] 上海市场，跳过API查询: {stock_code}")
+                    logger.error(f"⚠️ 获取深圳股票列表失败: {e}")
             
             # 如果都失败了，返回默认格式并缓存
             default_name = f'股票{stock_code}'
-            print(f"⚠️ [股票名称] 所有方法都失败，使用默认格式: {stock_code} -> {default_name}")
             _stock_name_cache[stock_code] = default_name
             return default_name
             
         except Exception as e:
-            print(f"❌ [股票名称] 获取股票名称失败: {e}")
-            import traceback
-            print(f"❌ [股票名称] 详细错误信息:")
-            print(traceback.format_exc())
+            logger.error(f"⚠️ 获取股票名称失败: {e}")
             default_name = f'股票{stock_code}'
             _stock_name_cache[stock_code] = default_name
             return default_name
@@ -289,7 +265,7 @@ class TongDaXinDataProvider:
             }
             
         except Exception as e:
-            print(f"获取实时数据失败: {e}")
+            logger.error(f"获取实时数据失败: {e}")
             return {}
     
     def get_stock_history_data(self, stock_code: str, start_date: str, end_date: str, period: str = 'D') -> pd.DataFrame:
@@ -361,7 +337,7 @@ class TongDaXinDataProvider:
             return df
             
         except Exception as e:
-            print(f"获取历史数据失败: {e}")
+            logger.error(f"获取历史数据失败: {e}")
             return pd.DataFrame()
     
     def get_stock_technical_indicators(self, stock_code: str, period: int = 20) -> Dict:
@@ -420,7 +396,7 @@ class TongDaXinDataProvider:
             return indicators
             
         except Exception as e:
-            print(f"计算技术指标失败: {e}")
+            logger.error(f"计算技术指标失败: {e}")
             return {}
     
     def search_stocks(self, keyword: str) -> List[Dict]:
@@ -436,7 +412,7 @@ class TongDaXinDataProvider:
                 return []
         
         try:
-            # 通达信没有直接的搜索API，这里提供一个简化的实现
+            # 中国股票数据没有直接的搜索API，这里提供一个简化的实现
             # 实际使用中可以维护一个股票代码表
             
             # 常见股票代码映射
@@ -471,7 +447,7 @@ class TongDaXinDataProvider:
             return results
             
         except Exception as e:
-            print(f"搜索股票失败: {e}")
+            logger.error(f"搜索股票失败: {e}")
             return []
     
     def _get_market_code(self, stock_code: str) -> int:
@@ -523,7 +499,7 @@ class TongDaXinDataProvider:
             return market_data
             
         except Exception as e:
-            print(f"获取市场概览失败: {e}")
+            logger.error(f"获取市场概览失败: {e}")
             return {}
 
 
@@ -571,7 +547,7 @@ def _get_mongodb_connection():
             _mongodb_db = _mongodb_client[config['database']]
             
         except Exception as e:
-            print(f"⚠️ MongoDB连接失败: {e}")
+            logger.error(f"⚠️ MongoDB连接失败: {e}")
             _mongodb_client = None
             _mongodb_db = None
     
@@ -593,7 +569,7 @@ def _get_stock_name_from_mongodb(stock_code: str) -> Optional[str]:
         return None
         
     except Exception as e:
-        print(f"⚠️ 从MongoDB获取股票名称失败: {e}")
+        logger.error(f"⚠️ 从MongoDB获取股票名称失败: {e}")
         return None
 
 # 精简的常用股票名称映射（仅包含最常见的股票）
@@ -610,14 +586,14 @@ _common_stock_names = {
     '002304': '洋河股份',
     
     # 深圳创业板
+    '300001': '特锐德',
+    '300015': '爱尔眼科',
     '300059': '东方财富',
     '300750': '宁德时代',
-    '300015': '爱尔眼科',
     
     # 上海主板
     '600519': '贵州茅台',
     '600036': '招商银行',
-    '600436': '片仔癀',  # 福建片仔癀股份有限公司
     '601398': '工商银行',
     '601127': '小康股份',
     '600000': '浦发银行',
@@ -634,16 +610,16 @@ def get_tdx_provider() -> TongDaXinDataProvider:
     """获取通达信数据提供器实例"""
     global _tdx_provider
     if _tdx_provider is None:
-        print(f"🔍 [DEBUG] 创建新的通达信数据提供器实例...")
+        logger.debug(f"🔍 [DEBUG] 创建新的通达信数据提供器实例...")
         _tdx_provider = TongDaXinDataProvider()
-        print(f"🔍 [DEBUG] 通达信数据提供器实例创建完成")
+        logger.debug(f"🔍 [DEBUG] 通达信数据提供器实例创建完成")
     else:
-        print(f"🔍 [DEBUG] 使用现有的通达信数据提供器实例")
+        logger.debug(f"🔍 [DEBUG] 使用现有的通达信数据提供器实例")
         # 检查连接状态，如果连接断开则重新创建
         if not _tdx_provider.is_connected():
-            print(f"🔍 [DEBUG] 检测到连接断开，重新创建通达信数据提供器...")
+            logger.debug(f"🔍 [DEBUG] 检测到连接断开，重新创建通达信数据提供器...")
             _tdx_provider = TongDaXinDataProvider()
-            print(f"🔍 [DEBUG] 通达信数据提供器重新创建完成")
+            logger.debug(f"🔍 [DEBUG] 通达信数据提供器重新创建完成")
     return _tdx_provider
 
 
@@ -657,7 +633,7 @@ def get_china_stock_data(stock_code: str, start_date: str, end_date: str) -> str
     Returns:
         str: 格式化的股票数据
     """
-    print(f"📊 正在获取中国股票数据: {stock_code} ({start_date} 到 {end_date})")
+    logger.info(f"📊 正在获取中国股票数据: {stock_code} ({start_date} 到 {end_date})")
 
     # 优先尝试从数据库缓存加载数据（使用统一的database_manager）
     try:
@@ -681,10 +657,10 @@ def get_china_stock_data(stock_code: str, start_date: str, end_date: str) -> str
                 }, sort=[("created_at", -1)])
 
                 if cached_doc and 'data' in cached_doc:
-                    print(f"🗄️ 从MongoDB缓存加载数据: {stock_code}")
+                    logger.info(f"🗄️ 从MongoDB缓存加载数据: {stock_code}")
                     return cached_doc['data']
     except Exception as e:
-        print(f"⚠️ 从MongoDB加载缓存失败: {e}")
+        logger.error(f"⚠️ 从MongoDB加载缓存失败: {e}")
 
     # 如果数据库缓存不可用，尝试文件缓存
     if FILE_CACHE_AVAILABLE:
@@ -700,10 +676,10 @@ def get_china_stock_data(stock_code: str, start_date: str, end_date: str) -> str
         if cache_key:
             cached_data = cache.load_stock_data(cache_key)
             if cached_data:
-                print(f"💾 从文件缓存加载数据: {stock_code} -> {cache_key}")
+                logger.info(f"💾 从文件缓存加载数据: {stock_code} -> {cache_key}")
                 return cached_data
 
-    print(f"🌐 从通达信API获取数据: {stock_code}")
+    logger.info(f"🌐 从Tushare数据接口获取数据: {stock_code}")
 
     try:
         provider = get_tdx_provider()
@@ -750,7 +726,7 @@ def get_china_stock_data(stock_code: str, start_date: str, end_date: str) -> str
 ## 📋 最近5日数据
 {df.tail().to_string()}
 
-数据来源: 通达信API (实时数据)
+数据来源: Tushare数据接口 (实时数据)
 """
 
         # 优先保存到数据库缓存（使用统一的database_manager）
@@ -785,9 +761,9 @@ def get_china_stock_data(stock_code: str, start_date: str, end_date: str) -> str
                         doc,
                         upsert=True
                     )
-                    print(f"💾 数据已保存到MongoDB: {stock_code}")
+                    logger.info(f"💾 数据已保存到MongoDB: {stock_code}")
         except Exception as e:
-            print(f"⚠️ 保存到MongoDB失败: {e}")
+            logger.error(f"⚠️ 保存到MongoDB失败: {e}")
 
         # 同时保存到文件缓存作为备份
         if FILE_CACHE_AVAILABLE:
@@ -805,10 +781,10 @@ def get_china_stock_data(stock_code: str, start_date: str, end_date: str) -> str
     except Exception as e:
         import traceback
         error_details = traceback.format_exc()
-        print(f"❌ [DEBUG] 通达信API调用失败:")
-        print(f"❌ [DEBUG] 错误类型: {type(e).__name__}")
-        print(f"❌ [DEBUG] 错误信息: {str(e)}")
-        print(f"❌ [DEBUG] 详细堆栈:")
+        logger.error(f"❌ [DEBUG] Tushare数据接口调用失败:")
+        logger.error(f"❌ [DEBUG] 错误类型: {type(e).__name__}")
+        logger.error(f"❌ [DEBUG] 错误信息: {str(e)}")
+        logger.error(f"❌ [DEBUG] 详细堆栈:")
         print(error_details)
 
         return f"""
@@ -823,9 +799,9 @@ def get_china_stock_data(stock_code: str, start_date: str, end_date: str) -> str
 1. 检查pytdx库是否已安装: pip install pytdx
 2. 确认股票代码格式正确 (如: 000001, 600519)
 3. 检查网络连接是否正常
-4. 尝试重新连接通达信服务器
+4. 尝试重新连接数据服务器
 
-注: 通达信API需要网络连接到通达信服务器
+注: 数据接口需要网络连接到数据服务器
 """
 
 
@@ -849,7 +825,7 @@ def get_china_market_overview() -> str:
             result += f"- 成交量: {data['volume']:,}\n\n"
         
         result += f"更新时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
-        result += "数据来源: 通达信API\n"
+        result += "数据来源: Tushare数据接口\n"
         
         return result
         
@@ -872,14 +848,15 @@ def get_china_stock_data_enhanced(stock_code: str, start_date: str, end_date: st
     """
     try:
         from .stock_data_service import get_stock_data_service
+
         service = get_stock_data_service()
         return service.get_stock_data_with_fallback(stock_code, start_date, end_date)
     except ImportError:
         # 如果新服务不可用，降级到原有函数
-        print("⚠️ 增强服务不可用，使用原有函数")
+        logger.warning(f"⚠️ 增强服务不可用，使用原有函数")
         return get_china_stock_data(stock_code, start_date, end_date)
     except Exception as e:
-        print(f"⚠️ 增强服务出错，降级到原有函数: {e}")
+        logger.warning(f"⚠️ 增强服务出错，降级到原有函数: {e}")
         return get_china_stock_data(stock_code, start_date, end_date)
 
 # ... existing code ...
