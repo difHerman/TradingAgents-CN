@@ -1,8 +1,9 @@
 import time
 import json
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
 
-def create_risky_debator(llm):
+def create_risky_debator(llm, toolkit):
     def risky_node(state) -> dict:
         risk_debate_state = state["risk_debate_state"]
         history = risk_debate_state.get("history", "")
@@ -18,7 +19,12 @@ def create_risky_debator(llm):
 
         trader_decision = state["trader_investment_plan"]
 
-        prompt = f"""作为激进风险分析师，您的职责是积极倡导高回报、高风险的投资机会，强调大胆策略和竞争优势。在评估交易员的决策或计划时，请重点关注潜在的上涨空间、增长潜力和创新收益——即使这些伴随着较高的风险。使用提供的市场数据和情绪分析来加强您的论点，并挑战对立观点。具体来说，请直接回应保守和中性分析师提出的每个观点，用数据驱动的反驳和有说服力的推理进行反击。突出他们的谨慎态度可能错过的关键机会，或者他们的假设可能过于保守的地方。以下是交易员的决策：
+        tools = [
+                toolkit.get_stock_news_openai,
+                toolkit.get_reddit_stock_info,
+        ]
+
+        system_message = f"""作为激进风险分析师，您的职责是积极倡导高回报、高风险的投资机会，强调大胆策略和竞争优势。在评估交易员的决策或计划时，请重点关注潜在的上涨空间、增长潜力和创新收益——即使这些伴随着较高的风险。使用提供的市场数据和情绪分析来加强您的论点，并挑战对立观点。具体来说，请直接回应保守和中性分析师提出的每个观点，用数据驱动的反驳和有说服力的推理进行反击。突出他们的谨慎态度可能错过的关键机会，或者他们的假设可能过于保守的地方。以下是交易员的决策：
 
 {trader_decision}
 
@@ -32,8 +38,27 @@ def create_risky_debator(llm):
 
 积极参与，解决提出的任何具体担忧，反驳他们逻辑中的弱点，并断言承担风险的好处以超越市场常规。专注于辩论和说服，而不仅仅是呈现数据。挑战每个反驳点，强调为什么高风险方法是最优的。请用中文以对话方式输出，就像您在说话一样，不使用任何特殊格式。"""
 
-        response = llm.invoke(prompt)
+        prompt = ChatPromptTemplate.from_messages(
+            [
+                (
+                    "system",
+                    "您是一位有用的AI助手，与其他助手协作。"
+                    " 使用提供的工具来推进回答问题。"
+                    " 如果您无法完全回答，没关系；具有不同工具的其他助手"
+                    " 将从您停下的地方继续帮助。执行您能做的以取得进展。"
+                    " 您可以访问以下工具：{tool_names}。\n{system_message}",
+                ),
+                MessagesPlaceholder(variable_name="messages"),
+            ]
+        )
+        
+        prompt = prompt.partial(system_message=system_message)
+        prompt = prompt.partial(tool_names=", ".join([tool.name for tool in tools]))
 
+        chain = prompt | llm.bind_tools(tools)
+
+        response = chain.invoke(state["messages"])
+        
         argument = f"Risky Analyst: {response.content}"
 
         new_risk_debate_state = {

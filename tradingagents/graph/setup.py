@@ -131,9 +131,9 @@ class GraphSetup:
         trader_node = create_trader(self.quick_thinking_llm, self.trader_memory)
 
         # Create risk analysis nodes
-        risky_analyst = create_risky_debator(self.quick_thinking_llm)
-        neutral_analyst = create_neutral_debator(self.quick_thinking_llm)
-        safe_analyst = create_safe_debator(self.quick_thinking_llm)
+        risky_analyst = create_risky_debator(self.quick_thinking_llm, self.toolkit)
+        neutral_analyst = create_neutral_debator(self.quick_thinking_llm, self.toolkit)
+        safe_analyst = create_safe_debator(self.quick_thinking_llm, self.toolkit)
         risk_manager_node = create_risk_manager(
             self.deep_thinking_llm, self.risk_manager_memory
         )
