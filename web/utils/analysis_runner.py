@@ -495,6 +495,220 @@ def run_stock_analysis(stock_symbol, analysis_date, analysts, research_depth, ll
         # 如果真实分析失败，返回模拟数据用于演示
         return generate_demo_results(stock_symbol, analysis_date, analysts, research_depth, llm_provider, llm_model, str(e), market_type)
 
+
+def run_sector_analysis(analysis_date, analysts, research_depth, llm_provider, llm_model, progress_callback=None):
+    """执行板块投资分析
+
+    Args:
+        analysis_date: 分析日期
+        analysts: 分析师列表
+        research_depth: 研究深度
+        llm_provider: LLM提供商 (dashscope/deepseek/google)
+        llm_model: 大模型名称
+        progress_callback: 进度回调函数，用于更新UI状态
+    """
+
+    def update_progress(message, step=None, total_steps=None):
+        """更新进度"""
+        if progress_callback:
+            progress_callback(message, step, total_steps)
+        logger.info(f"[板块分析进度] {message}")
+
+    # 生成会话ID用于Token跟踪和日志关联
+    session_id = f"sector_analysis_{uuid.uuid4().hex[:8]}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    logger.info(f"📊 [板块投资分析] 开始板块投资分析，会话ID: {session_id}")
+
+    # 估算Token使用（用于成本预估）
+    if TOKEN_TRACKING_ENABLED:
+        estimated_input = 2000  # 板块分析估算输入token
+        estimated_output = 1500  # 板块分析估算输出token
+        estimated_cost = token_tracker.estimate_cost(llm_provider, llm_model, estimated_input, estimated_output)
+        logger.info(f"📊 [Token跟踪] 预估分析成本: ¥{estimated_cost:.4f}")
+
+    update_progress("🚀 初始化板块投资分析系统...", 1, 5)
+
+    try:
+        # 导入必要的模块
+        from tradingagents.agents.analysts.sector_investment_analyst import create_sector_investment_analyst
+        from tradingagents.default_config import DEFAULT_CONFIG
+        from tradingagents.agents.utils.agent_utils import Toolkit
+        from langchain_openai import ChatOpenAI
+        from tradingagents.llm_adapters import ChatDashScopeOpenAI
+        from tradingagents.llm_adapters.deepseek_adapter import ChatDeepSeek
+        import os
+
+        # 创建配置
+        update_progress("⚙️ 配置AI模型...", 2, 5)
+        config = DEFAULT_CONFIG.copy()
+        config["llm_provider"] = llm_provider
+        config["deep_think_llm"] = llm_model
+        config["quick_think_llm"] = llm_model
+        
+        # 根据研究深度调整配置
+        if research_depth == 1:  # 1级 - 快速分析
+            config["online_tools"] = True
+            if llm_provider == "dashscope":
+                config["quick_think_llm"] = "qwen-turbo"
+                config["deep_think_llm"] = "qwen-plus"
+            elif llm_provider == "deepseek":
+                config["quick_think_llm"] = "deepseek-chat"
+                config["deep_think_llm"] = "deepseek-chat"
+        else:
+            config["online_tools"] = True
+            if llm_provider == "dashscope":
+                config["quick_think_llm"] = "qwen-plus"
+                config["deep_think_llm"] = "qwen-max"
+            elif llm_provider == "deepseek":
+                config["quick_think_llm"] = "deepseek-chat" 
+                config["deep_think_llm"] = "deepseek-chat"
+
+        # 根据LLM提供商设置不同的配置
+        if llm_provider == "dashscope":
+            config["backend_url"] = "https://dashscope.aliyuncs.com/api/v1"
+        elif llm_provider == "deepseek":
+            config["backend_url"] = "https://api.deepseek.com"
+
+        # 创建LLM（参考TradingAgentsGraph的逻辑）
+        if llm_provider.lower() == "dashscope" or "dashscope" in llm_provider.lower():
+            logger.info(f"🔧 使用阿里百炼 OpenAI 兼容适配器")
+            llm = ChatDashScopeOpenAI(
+                model=config["deep_think_llm"],
+                temperature=0.1,
+                max_tokens=2000
+            )
+        elif llm_provider.lower() == "deepseek":
+            deepseek_api_key = os.getenv('DEEPSEEK_API_KEY')
+            if not deepseek_api_key:
+                raise ValueError("使用DeepSeek需要设置DEEPSEEK_API_KEY环境变量")
+            deepseek_base_url = config.get("backend_url", "https://api.deepseek.com")
+            logger.info(f"🔧 使用DeepSeek适配器")
+            llm = ChatDeepSeek(
+                model=config["deep_think_llm"],
+                api_key=deepseek_api_key,
+                base_url=deepseek_base_url,
+                temperature=0.1,
+                max_tokens=2000
+            )
+        else:
+            raise ValueError(f"不支持的LLM提供商: {llm_provider}")
+
+        # 创建工具包
+        toolkit = Toolkit(config=config)
+
+        logger.info(f"📊 [板块投资分析] 使用模型: {llm_provider}/{llm_model}")
+
+        # 初始化分析状态
+        state = {
+            "trade_date": analysis_date,
+            "session_id": session_id,
+            "research_depth": research_depth,
+            "llm_provider": llm_provider,
+            "llm_model": llm_model,
+            "analysis_mode": "板块投资分析"
+        }
+
+        # 执行板块投资分析
+        update_progress("📊 正在分析全市场新闻并生成板块投资建议...", 3, 5)
+        
+        # 创建板块投资分析师
+        sector_investment_analyst = create_sector_investment_analyst(llm, toolkit)
+        
+        # 执行分析
+        sector_results = sector_investment_analyst(state)
+        
+        update_progress("✅ 板块投资分析完成", 4, 5)
+
+        # 记录Token使用（估算值）
+        if TOKEN_TRACKING_ENABLED:
+            # 使用基于分析复杂度的估算
+            actual_input_tokens = 2500  # 板块分析通常需要处理更多新闻数据
+            actual_output_tokens = 1800  # 生成详细的板块投资建议
+
+            usage_record = token_tracker.track_usage(
+                provider=llm_provider,
+                model_name=llm_model,
+                input_tokens=actual_input_tokens,
+                output_tokens=actual_output_tokens,
+                session_id=session_id,
+                analysis_type="sector_analysis"
+            )
+
+            if usage_record:
+                update_progress(f"💰 记录使用成本: ¥{usage_record.cost:.4f}")
+
+        # 整理结果
+        results = {
+            "session_id": session_id,
+            "analysis_date": analysis_date,
+            "analysis_mode": "板块投资分析",
+            "market_type": "全市场",
+            "stock_symbol": "板块投资分析",
+            "analysts_used": analysts,
+            "research_depth": research_depth,
+            "llm_provider": llm_provider,
+            "llm_model": llm_model,
+            "analysis_results": {
+                "sector_investment": {
+                    "report": sector_results.get("sector_investment_report", ""),
+                    "completed": sector_results.get("sector_analysis_completed", False),
+                    "timestamp": sector_results.get("sector_analysis_timestamp", ""),
+                    "duration": sector_results.get("sector_analysis_duration", 0)
+                }
+            },
+            "analysis_summary": {
+                "completion_status": "completed",
+                "total_analysts": 1,
+                "analysis_duration": sector_results.get("sector_analysis_duration", 0),
+                "main_conclusion": "板块投资分析已完成",
+                "risk_level": "中等",
+                "confidence_score": 85
+            }
+        }
+
+        # 计算总成本（如果有Token跟踪）
+        total_cost = 0.0
+        if TOKEN_TRACKING_ENABLED:
+            try:
+                total_cost = token_tracker.get_session_cost(session_id)
+                if total_cost > 0:
+                    results["total_cost"] = total_cost
+                    logger.info(f"📊 [Token使用] 总分析成本: ¥{total_cost:.4f}")
+            except Exception as e:
+                logger.warning(f"⚠️ [Token跟踪] 获取成本信息失败: {e}")
+
+        update_progress("🎉 板块投资分析全部完成！", 5, 5)
+        logger.info(f"✅ [板块投资分析] 分析完成，会话ID: {session_id}")
+
+        # 自动保存板块投资分析报告
+        try:
+            from web.utils.sector_report_exporter import auto_save_sector_analysis
+            saved_files = auto_save_sector_analysis(results)
+            if saved_files:
+                logger.info(f"📁 [板块投资分析] 报告已自动保存到 {len(saved_files)} 个文件")
+                results['saved_report_files'] = saved_files
+            else:
+                logger.warning("⚠️ [板块投资分析] 报告自动保存失败")
+        except Exception as e:
+            logger.error(f"❌ [板块投资分析] 报告保存错误: {e}")
+
+        return results
+
+    except Exception as e:
+        error_msg = f"❌ 板块投资分析失败: {str(e)}"
+        logger.error(f"❌ [板块投资分析] {error_msg}")
+        update_progress(error_msg)
+
+        # 记录异常情况下的Token使用（如果有的话）
+        if TOKEN_TRACKING_ENABLED:
+            try:
+                total_cost = token_tracker.get_session_cost(session_id)
+                if total_cost > 0:
+                    logger.info(f"📊 [Token使用] 分析失败前的成本: ¥{total_cost:.4f}")
+            except:
+                pass
+
+        raise Exception(error_msg)
+
 def format_analysis_results(results):
     """格式化分析结果用于显示"""
     

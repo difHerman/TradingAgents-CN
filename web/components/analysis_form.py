@@ -33,59 +33,85 @@ def render_analysis_form():
         col1, col2 = st.columns(2)
         
         with col1:
-            # 市场选择（使用缓存的值）
-            market_options = ["美股", "A股", "港股"]
-            cached_market = cached_config.get('market_type', 'A股') if cached_config else 'A股'
+            # 分析模式选择
+            analysis_modes = ["个股分析", "板块投资分析"]
+            cached_mode = cached_config.get('analysis_mode', '个股分析') if cached_config else '个股分析'
             try:
-                market_index = market_options.index(cached_market)
+                mode_index = analysis_modes.index(cached_mode)
             except (ValueError, TypeError):
-                market_index = 1  # 默认A股
+                mode_index = 0  # 默认个股分析
 
-            market_type = st.selectbox(
-                "选择市场 🌍",
-                options=market_options,
-                index=market_index,
-                help="选择要分析的股票市场"
+            analysis_mode = st.selectbox(
+                "分析模式 🎯",
+                options=analysis_modes,
+                index=mode_index,
+                help="选择分析模式：个股分析需要输入股票代码，板块投资分析无需股票代码"
             )
 
-            # 根据市场类型显示不同的输入提示
-            cached_stock = cached_config.get('stock_symbol', '') if cached_config else ''
+            # 只有在个股分析模式下才显示市场选择
+            if analysis_mode == "个股分析":
+                # 市场选择（使用缓存的值）
+                market_options = ["美股", "A股", "港股"]
+                cached_market = cached_config.get('market_type', 'A股') if cached_config else 'A股'
+                try:
+                    market_index = market_options.index(cached_market)
+                except (ValueError, TypeError):
+                    market_index = 1  # 默认A股
 
-            if market_type == "美股":
-                stock_symbol = st.text_input(
-                    "股票代码 📈",
-                    value=cached_stock if (cached_config and cached_config.get('market_type') == '美股') else '',
-                    placeholder="输入美股代码，如 AAPL, TSLA, MSFT，然后按回车确认",
-                    help="输入要分析的美股代码，输入完成后请按回车键确认",
-                    key="us_stock_input",
-                    autocomplete="off"  # 修复autocomplete警告
-                ).upper().strip()
+                market_type = st.selectbox(
+                    "选择市场 🌍",
+                    options=market_options,
+                    index=market_index,
+                    help="选择要分析的股票市场"
+                )
+            else:
+                # 板块分析模式默认为全市场
+                market_type = "全市场"
 
-                logger.debug(f"🔍 [FORM DEBUG] 美股text_input返回值: '{stock_symbol}'")
+            # 根据分析模式和市场类型显示不同的输入提示
+            if analysis_mode == "个股分析":
+                # 个股分析模式 - 需要输入股票代码
+                cached_stock = cached_config.get('stock_symbol', '') if cached_config else ''
 
-            elif market_type == "港股":
-                stock_symbol = st.text_input(
-                    "股票代码 📈",
-                    value=cached_stock if (cached_config and cached_config.get('market_type') == '港股') else '',
-                    placeholder="输入港股代码，如 0700.HK, 9988.HK, 3690.HK，然后按回车确认",
-                    help="输入要分析的港股代码，如 0700.HK(腾讯控股), 9988.HK(阿里巴巴), 3690.HK(美团)，输入完成后请按回车键确认",
-                    key="hk_stock_input",
-                    autocomplete="off"  # 修复autocomplete警告
-                ).upper().strip()
+                if market_type == "美股":
+                    stock_symbol = st.text_input(
+                        "股票代码 📈",
+                        value=cached_stock if (cached_config and cached_config.get('market_type') == '美股') else '',
+                        placeholder="输入美股代码，如 AAPL, TSLA, MSFT，然后按回车确认",
+                        help="输入要分析的美股代码，输入完成后请按回车键确认",
+                        key="us_stock_input",
+                        autocomplete="off"  # 修复autocomplete警告
+                    ).upper().strip()
 
-                logger.debug(f"🔍 [FORM DEBUG] 港股text_input返回值: '{stock_symbol}'")
+                    logger.debug(f"🔍 [FORM DEBUG] 美股text_input返回值: '{stock_symbol}'")
 
-            else:  # A股
-                stock_symbol = st.text_input(
-                    "股票代码 📈",
-                    value=cached_stock if (cached_config and cached_config.get('market_type') == 'A股') else '',
-                    placeholder="输入A股代码，如 000001, 600519，然后按回车确认",
-                    help="输入要分析的A股代码，如 000001(平安银行), 600519(贵州茅台)，输入完成后请按回车键确认",
-                    key="cn_stock_input",
-                    autocomplete="off"  # 修复autocomplete警告
-                ).strip()
+                elif market_type == "港股":
+                    stock_symbol = st.text_input(
+                        "股票代码 📈",
+                        value=cached_stock if (cached_config and cached_config.get('market_type') == '港股') else '',
+                        placeholder="输入港股代码，如 0700.HK, 9988.HK, 3690.HK，然后按回车确认",
+                        help="输入要分析的港股代码，如 0700.HK(腾讯控股), 9988.HK(阿里巴巴), 3690.HK(美团)，输入完成后请按回车键确认",
+                        key="hk_stock_input",
+                        autocomplete="off"  # 修复autocomplete警告
+                    ).upper().strip()
 
-                logger.debug(f"🔍 [FORM DEBUG] A股text_input返回值: '{stock_symbol}'")
+                    logger.debug(f"🔍 [FORM DEBUG] 港股text_input返回值: '{stock_symbol}'")
+
+                else:  # A股
+                    stock_symbol = st.text_input(
+                        "股票代码 📈",
+                        value=cached_stock if (cached_config and cached_config.get('market_type') == 'A股') else '',
+                        placeholder="输入A股代码，如 000001, 600519，然后按回车确认",
+                        help="输入要分析的A股代码，如 000001(平安银行), 600519(贵州茅台)，输入完成后请按回车键确认",
+                        key="cn_stock_input",
+                        autocomplete="off"  # 修复autocomplete警告
+                    ).strip()
+
+                    logger.debug(f"🔍 [FORM DEBUG] A股text_input返回值: '{stock_symbol}'")
+            else:
+                # 板块投资分析模式 - 不需要股票代码
+                stock_symbol = ""
+                st.info("💡 板块投资分析模式：无需输入股票代码，将分析全市场新闻并提供板块投资建议")
 
             # 分析日期
             analysis_date = st.date_input(
@@ -183,10 +209,14 @@ def render_analysis_form():
             )
 
         # 显示输入状态提示
-        if not stock_symbol:
-            st.info("💡 请在上方输入股票代码，输入完成后按回车键确认")
+        if analysis_mode == "个股分析":
+            if not stock_symbol:
+                st.info("💡 请在上方输入股票代码，输入完成后按回车键确认")
+            else:
+                st.success(f"✅ 已输入股票代码: {stock_symbol}")
         else:
-            st.success(f"✅ 已输入股票代码: {stock_symbol}")
+            # 板块投资分析模式
+            st.success("✅ 板块投资分析模式：将分析全市场新闻并提供板块投资建议")
 
         # 添加JavaScript来改善用户体验
         st.markdown("""
@@ -211,6 +241,7 @@ def render_analysis_form():
 
         # 在提交按钮前检测配置变化并保存
         current_config = {
+            'analysis_mode': analysis_mode,
             'stock_symbol': stock_symbol,
             'market_type': market_type,
             'research_depth': research_depth,
@@ -244,11 +275,33 @@ def render_analysis_form():
             use_container_width=True
         )
 
-    # 只有在提交时才返回数据
-    if submitted and stock_symbol:  # 确保有股票代码才提交
-        # 添加详细日志
+    # 提交逻辑 - 支持个股分析和板块分析两种模式
+    if submitted:
+        # 验证提交条件
+        can_submit = True
+        error_messages = []
+        
+        # 个股分析模式需要股票代码
+        if analysis_mode == "个股分析" and not stock_symbol:
+            can_submit = False
+            error_messages.append("❌ 个股分析模式需要输入股票代码")
+        
+        # 至少选择一个分析师
+        if not selected_analysts:
+            can_submit = False
+            error_messages.append("❌ 请至少选择一个分析师")
+        
+        if not can_submit:
+            # 显示错误信息
+            for error in error_messages:
+                st.error(error)
+            logger.error(f"🔍 [FORM DEBUG] 提交验证失败: {error_messages}")
+            return {'submitted': False}
+        
+        # 验证通过，处理提交
         logger.debug(f"🔍 [FORM DEBUG] ===== 分析表单提交 =====")
-        logger.debug(f"🔍 [FORM DEBUG] 用户输入的股票代码: '{stock_symbol}'")
+        logger.debug(f"🔍 [FORM DEBUG] 分析模式: '{analysis_mode}'")
+        logger.debug(f"🔍 [FORM DEBUG] 股票代码: '{stock_symbol}'")
         logger.debug(f"🔍 [FORM DEBUG] 市场类型: '{market_type}'")
         logger.debug(f"🔍 [FORM DEBUG] 分析日期: '{analysis_date}'")
         logger.debug(f"🔍 [FORM DEBUG] 选择的分析师: {[a[0] for a in selected_analysts]}")
@@ -256,6 +309,7 @@ def render_analysis_form():
 
         form_data = {
             'submitted': True,
+            'analysis_mode': analysis_mode,
             'stock_symbol': stock_symbol,
             'market_type': market_type,
             'analysis_date': str(analysis_date),
@@ -268,6 +322,7 @@ def render_analysis_form():
 
         # 保存表单配置到缓存和持久化存储
         form_config = {
+            'analysis_mode': analysis_mode,
             'stock_symbol': stock_symbol,
             'market_type': market_type,
             'research_depth': research_depth,
@@ -286,7 +341,7 @@ def render_analysis_form():
             smart_session_manager.save_analysis_state(
                 analysis_id=current_analysis_id,
                 status=st.session_state.get('analysis_running', False) and 'running' or 'idle',
-                stock_symbol=stock_symbol,
+                stock_symbol=stock_symbol or "板块分析",
                 market_type=market_type,
                 form_config=form_config
             )
@@ -299,10 +354,5 @@ def render_analysis_form():
         logger.debug(f"🔍 [FORM DEBUG] ===== 表单提交结束 =====")
 
         return form_data
-    elif submitted and not stock_symbol:
-        # 用户点击了提交但没有输入股票代码
-        logger.error(f"🔍 [FORM DEBUG] 提交失败：股票代码为空")
-        st.error("❌ 请输入股票代码后再提交")
-        return {'submitted': False}
     else:
         return {'submitted': False}

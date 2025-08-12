@@ -7,6 +7,7 @@ import plotly.graph_objects as go
 import plotly.express as px
 import pandas as pd
 from datetime import datetime
+from pathlib import Path
 
 # 导入导出功能
 from utils.report_exporter import render_export_buttons
@@ -48,9 +49,15 @@ def render_results(results):
     decision = results.get('decision', {})
     state = results.get('state', {})
     is_demo = results.get('is_demo', False)
+    analysis_mode = results.get('analysis_mode', 'stock_analysis')
 
     st.markdown("---")
-    st.header(f"📊 {stock_symbol} 分析结果")
+    
+    # 根据分析模式显示不同的标题
+    if analysis_mode == "板块投资分析":
+        st.header("📊 全市场板块投资分析结果")
+    else:
+        st.header(f"📊 {stock_symbol} 分析结果")
 
     # 如果是演示数据，显示提示
     if is_demo:
@@ -59,14 +66,20 @@ def render_results(results):
             with st.expander("查看详细信息"):
                 st.text(results['demo_reason'])
 
-    # 投资决策摘要
-    render_decision_summary(decision, stock_symbol)
+    # 根据分析模式显示不同的内容
+    if analysis_mode == "板块投资分析":
+        # 板块投资分析专用显示
+        render_sector_investment_analysis(results)
+    else:
+        # 传统股票分析显示
+        # 投资决策摘要
+        render_decision_summary(decision, stock_symbol)
 
-    # 分析配置信息
-    render_analysis_info(results)
+        # 分析配置信息
+        render_analysis_info(results)
 
-    # 详细分析报告
-    render_detailed_analysis(state)
+        # 详细分析报告
+        render_detailed_analysis(state)
 
     # 风险提示
     render_risk_warning(is_demo)
@@ -306,6 +319,155 @@ def render_detailed_analysis(state):
                     st.write(content)
             else:
                 st.info(f"暂无{module['title']}数据")
+
+def render_sector_investment_analysis(results):
+    """渲染板块投资分析结果"""
+    
+    # 获取分析结果
+    analysis_results = results.get('analysis_results', {})
+    sector_data = analysis_results.get('sector_investment', {})
+    
+    # 显示分析摘要
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        st.metric(
+            label="分析状态",
+            value="✅ 已完成" if sector_data.get('completed', False) else "⏳ 处理中",
+            help="板块投资分析完成状态"
+        )
+    
+    with col2:
+        analysis_date = results.get('analysis_date', '未知')
+        st.metric(
+            label="分析日期",
+            value=analysis_date,
+            help="分析的基准日期"
+        )
+    
+    with col3:
+        duration = sector_data.get('duration', 0)
+        duration_text = f"{duration:.1f}秒" if duration > 0 else "未知"
+        st.metric(
+            label="分析耗时",
+            value=duration_text,
+            help="完成分析所需的时间"
+        )
+    
+    # 显示主要分析报告
+    sector_report = sector_data.get('report', '')
+    if sector_report:
+        st.subheader("📋 板块投资分析报告")
+        
+        # 如果报告很长，使用展开框
+        if len(sector_report) > 1000:
+            with st.expander("📊 查看完整的板块投资分析报告", expanded=True):
+                st.markdown(sector_report)
+        else:
+            st.markdown(sector_report)
+    else:
+        st.warning("⚠️ 暂无板块投资分析报告内容")
+    
+    # 显示分析配置信息
+    render_analysis_info(results)
+    
+    # 显示分析总结
+    analysis_summary = results.get('analysis_summary', {})
+    if analysis_summary:
+        st.subheader("📈 分析总结")
+        
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            completion_status = analysis_summary.get('completion_status', '未知')
+            status_display = {
+                'completed': '✅ 完成',
+                'failed': '❌ 失败',
+                'running': '⏳ 运行中'
+            }.get(completion_status, completion_status)
+            
+            st.metric(
+                label="完成状态",
+                value=status_display,
+                help="分析任务的完成状态"
+            )
+        
+        with col2:
+            risk_level = analysis_summary.get('risk_level', '未评估')
+            risk_color = {
+                '低': '🟢',
+                '中等': '🟡', 
+                '高': '🔴'
+            }.get(risk_level, '⚪')
+            
+            st.metric(
+                label="风险等级",
+                value=f"{risk_color} {risk_level}",
+                help="板块投资的整体风险评估"
+            )
+        
+        with col3:
+            confidence_score = analysis_summary.get('confidence_score', 0)
+            st.metric(
+                label="置信度",
+                value=f"{confidence_score}%" if confidence_score > 0 else "未评估",
+                help="分析结果的可信度评分"
+            )
+    
+    # 显示Token使用成本（如果有）
+    total_cost = results.get('total_cost', 0)
+    if total_cost > 0:
+        st.subheader("💰 分析成本")
+        st.metric(
+            label="总成本",
+            value=f"¥{total_cost:.4f}",
+            help="本次分析消耗的Token成本"
+        )
+    
+    # 显示已保存的报告文件（如果有）
+    saved_files = results.get('saved_report_files', {})
+    if saved_files:
+        st.subheader("📁 已保存的报告文件")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("**报告文件:**")
+            for file_type, file_path in saved_files.items():
+                file_name = Path(file_path).name
+                if file_type == 'main_report':
+                    st.write(f"📋 主报告: `{file_name}`")
+                elif file_type == 'summary':
+                    st.write(f"📊 分析摘要: `{file_name}`")
+                elif file_type == 'config':
+                    st.write(f"⚙️ 配置信息: `{file_name}`")
+                elif file_type == 'export':
+                    st.write(f"📤 导出报告: `{file_name}`")
+        
+        with col2:
+            # 显示报告目录
+            if saved_files:
+                first_file_path = list(saved_files.values())[0]
+                reports_dir = Path(first_file_path).parent
+                st.markdown("**报告目录:**")
+                st.code(str(reports_dir), language="text")
+                
+                # 提供快速访问按钮
+                if st.button("📂 打开报告目录", help="在文件管理器中打开报告目录"):
+                    import subprocess
+                    import platform
+                    try:
+                        if platform.system() == "Windows":
+                            subprocess.run(["explorer", str(reports_dir)], check=True)
+                        elif platform.system() == "Darwin":  # macOS
+                            subprocess.run(["open", str(reports_dir)], check=True)
+                        else:  # Linux
+                            subprocess.run(["xdg-open", str(reports_dir)], check=True)
+                        st.success("✅ 已打开报告目录")
+                    except Exception as e:
+                        st.error(f"❌ 打开目录失败: {e}")
+                        st.info(f"请手动访问: {reports_dir}")
+
 
 def render_risk_warning(is_demo=False):
     """渲染风险提示"""

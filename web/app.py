@@ -29,7 +29,7 @@ from components.header import render_header
 from components.analysis_form import render_analysis_form
 from components.results_display import render_results
 from utils.api_checker import check_api_keys
-from utils.analysis_runner import run_stock_analysis, validate_analysis_params, format_analysis_results
+from utils.analysis_runner import run_stock_analysis, run_sector_analysis, validate_analysis_params, format_analysis_results
 from utils.progress_tracker import SmartStreamlitProgressDisplay, create_smart_progress_callback
 from utils.async_progress_tracker import AsyncProgressTracker
 from components.async_progress_display import display_unified_progress
@@ -691,14 +691,31 @@ def main():
         # 检查是否提交了表单
         if form_data.get('submitted', False) and not st.session_state.get('analysis_running', False):
             # 只有在没有分析运行时才处理新的提交
-            # 验证分析参数
-            is_valid, validation_errors = validate_analysis_params(
-                stock_symbol=form_data['stock_symbol'],
-                analysis_date=form_data['analysis_date'],
-                analysts=form_data['analysts'],
-                research_depth=form_data['research_depth'],
-                market_type=form_data.get('market_type', '美股')
-            )
+            # 获取分析模式
+            analysis_mode = form_data.get('analysis_mode', '个股分析')
+            
+            # 验证分析参数 - 根据分析模式调整验证逻辑
+            if analysis_mode == "个股分析":
+                is_valid, validation_errors = validate_analysis_params(
+                    stock_symbol=form_data['stock_symbol'],
+                    analysis_date=form_data['analysis_date'],
+                    analysts=form_data['analysts'],
+                    research_depth=form_data['research_depth'],
+                    market_type=form_data.get('market_type', '美股')
+                )
+            else:
+                # 板块分析模式 - 简化验证（不需要股票代码）
+                validation_errors = []
+                
+                # 验证分析师
+                if not form_data['analysts'] or len(form_data['analysts']) == 0:
+                    validation_errors.append("请至少选择一个分析师")
+                
+                # 验证研究深度
+                if not form_data['research_depth'] or form_data['research_depth'] < 1 or form_data['research_depth'] > 5:
+                    validation_errors.append("研究深度必须在1-5之间")
+                
+                is_valid = len(validation_errors) == 0
 
             if not is_valid:
                 # 显示验证错误
@@ -712,17 +729,22 @@ def main():
                 st.session_state.analysis_results = None
                 logger.info("🧹 [新分析] 清空旧的分析结果")
 
-                # 生成分析ID
+                # 生成分析ID - 根据分析模式使用不同前缀
                 import uuid
-                analysis_id = f"analysis_{uuid.uuid4().hex[:8]}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                if analysis_mode == "个股分析":
+                    analysis_id = f"stock_analysis_{uuid.uuid4().hex[:8]}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                    symbol_for_save = form_data['stock_symbol']
+                else:
+                    analysis_id = f"sector_analysis_{uuid.uuid4().hex[:8]}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                    symbol_for_save = "板块投资分析"
 
                 # 保存分析ID和表单配置到session state和cookie
                 form_config = st.session_state.get('form_config', {})
                 set_persistent_analysis_id(
                     analysis_id=analysis_id,
                     status="running",
-                    stock_symbol=form_data['stock_symbol'],
-                    market_type=form_data.get('market_type', '美股'),
+                    stock_symbol=symbol_for_save,
+                    market_type=form_data.get('market_type', '全市场'),
                     form_config=form_config
                 )
 
@@ -745,12 +767,18 @@ def main():
                 with st.spinner("🔄 正在初始化分析..."):
                     time.sleep(1.5)  # 让用户看到反馈
 
-                st.info(f"📊 正在分析: {form_data.get('market_type', '美股')} {form_data['stock_symbol']}")
-                st.info("""
+                if analysis_mode == "个股分析":
+                    st.info(f"📊 正在分析: {form_data.get('market_type', '美股')} {form_data['stock_symbol']}")
+                    progress_section_name = "📊 股票分析"
+                else:
+                    st.info(f"📊 正在进行板块投资分析：分析全市场新闻并提供板块投资建议")
+                    progress_section_name = "📊 板块投资分析"
+                
+                st.info(f"""
                 ⏱️ 页面将在6秒后自动刷新...
 
                 📋 **查看分析进度：**
-                刷新后请向下滚动到 "📊 股票分析" 部分查看实时进度
+                刷新后请向下滚动到 "{progress_section_name}" 部分查看实时进度
                 """)
 
                 # 确保AsyncProgressTracker已经保存初始状态
@@ -759,8 +787,12 @@ def main():
                 # 设置分析状态
                 st.session_state.analysis_running = True
                 st.session_state.current_analysis_id = analysis_id
-                st.session_state.last_stock_symbol = form_data['stock_symbol']
-                st.session_state.last_market_type = form_data.get('market_type', '美股')
+                if analysis_mode == "个股分析":
+                    st.session_state.last_stock_symbol = form_data['stock_symbol']
+                    st.session_state.last_market_type = form_data.get('market_type', '美股')
+                else:
+                    st.session_state.last_stock_symbol = "板块投资分析"
+                    st.session_state.last_market_type = "全市场"
 
                 # 自动启用自动刷新选项（设置所有可能的key）
                 auto_refresh_keys = [
@@ -777,21 +809,35 @@ def main():
 
                 def run_analysis_in_background():
                     try:
-                        results = run_stock_analysis(
-                            stock_symbol=form_data['stock_symbol'],
-                            analysis_date=form_data['analysis_date'],
-                            analysts=form_data['analysts'],
-                            research_depth=form_data['research_depth'],
-                            llm_provider=config['llm_provider'],
-                            market_type=form_data.get('market_type', '美股'),
-                            llm_model=config['llm_model'],
-                            progress_callback=progress_callback
-                        )
+                        if analysis_mode == "个股分析":
+                            # 个股分析模式
+                            results = run_stock_analysis(
+                                stock_symbol=form_data['stock_symbol'],
+                                analysis_date=form_data['analysis_date'],
+                                analysts=form_data['analysts'],
+                                research_depth=form_data['research_depth'],
+                                llm_provider=config['llm_provider'],
+                                market_type=form_data.get('market_type', '美股'),
+                                llm_model=config['llm_model'],
+                                progress_callback=progress_callback
+                            )
+                            completion_message = "✅ 个股分析成功完成！"
+                        else:
+                            # 板块投资分析模式
+                            results = run_sector_analysis(
+                                analysis_date=form_data['analysis_date'],
+                                analysts=form_data['analysts'],
+                                research_depth=form_data['research_depth'],
+                                llm_provider=config['llm_provider'],
+                                llm_model=config['llm_model'],
+                                progress_callback=progress_callback
+                            )
+                            completion_message = "✅ 板块投资分析成功完成！"
 
                         # 标记分析完成并保存结果（不访问session state）
-                        async_tracker.mark_completed("✅ 分析成功完成！", results=results)
+                        async_tracker.mark_completed(completion_message, results=results)
 
-                        logger.info(f"✅ [分析完成] 股票分析成功完成: {analysis_id}")
+                        logger.info(f"✅ [分析完成] {analysis_mode}成功完成: {analysis_id}")
 
                     except Exception as e:
                         # 标记分析失败（不访问session state）
@@ -825,12 +871,16 @@ def main():
                 time.sleep(2)
                 st.rerun()
 
-        # 2. 股票分析区域（只有在有分析ID时才显示）
+        # 2. 分析区域（只有在有分析ID时才显示）
         current_analysis_id = st.session_state.get('current_analysis_id')
         if current_analysis_id:
             st.markdown("---")
 
-            st.header("📊 股票分析")
+            # 根据分析ID类型显示不同的标题
+            if current_analysis_id.startswith("sector_analysis_"):
+                st.header("📊 板块投资分析")
+            else:
+                st.header("📊 股票分析")
 
             # 使用线程检测来获取真实状态
             from utils.thread_tracker import check_analysis_status
@@ -950,27 +1000,34 @@ def main():
                 st.markdown("""
                 ### 📋 操作步骤
 
-                1. **输入股票代码**
+                **个股分析模式：**
+                1. **选择分析模式**: 选择 "个股分析"
+                2. **输入股票代码**
                    - A股示例: `000001` (平安银行), `600519` (贵州茅台), `000858` (五粮液)
                    - 美股示例: `AAPL` (苹果), `TSLA` (特斯拉), `MSFT` (微软)
                    - 港股示例: `00700` (腾讯), `09988` (阿里巴巴)
+                   - ⚠️ **重要提示**: 输入股票代码后，请按 **回车键** 确认输入！
 
-                   ⚠️ **重要提示**: 输入股票代码后，请按 **回车键** 确认输入！
+                **板块投资分析模式：**
+                1. **选择分析模式**: 选择 "板块投资分析"
+                2. **无需输入股票代码**: 系统将分析全市场新闻并提供板块投资建议
+                3. **获得投资建议**: 包含各板块投资机会、配置方案和风险控制
 
-                2. **选择分析日期**
+                **通用步骤：**
+                3. **选择分析日期**
                    - 默认为今天
                    - 可选择历史日期进行回测分析
 
-                3. **选择分析师团队**
+                4. **选择分析师团队**
                    - 至少选择一个分析师
                    - 建议选择多个分析师获得全面分析
 
-                4. **设置研究深度**
+                5. **设置研究深度**
                    - 1-2级: 快速概览
                    - 3级: 标准分析 (推荐)
                    - 4-5级: 深度研究
 
-                5. **点击开始分析**
+                6. **点击开始分析**
                    - 等待AI分析完成
                    - 查看详细分析报告
 
